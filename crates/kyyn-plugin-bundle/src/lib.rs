@@ -43,6 +43,9 @@ pub fn located_record_sha256(
 }
 
 fn find_record<'a>(value: &'a serde_json::Value, locator: &str) -> Option<&'a serde_json::Value> {
+    // Compatibility contract: keep this traversal in lockstep with the
+    // engine's validate_fetch_result locator. Move it into the published SDK
+    // if either side's bundle-location rules evolve.
     match value {
         serde_json::Value::Array(values) => {
             values.iter().find_map(|value| find_record(value, locator))
