@@ -15,9 +15,10 @@ repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 repro="$(mktemp -d -p /tmp kyyn-plugins-repro.XXXXXX)"
 trap 'case "$repro" in /tmp/kyyn-plugins-repro.*) rm -rf -- "$repro" ;; esac' EXIT
 
-# rustc's final wasm layout is sensitive to the lexical sysroot path even
-# when every embedded path is remapped. Give all builders the same relative
-# sysroot spelling while keeping the installed toolchain itself read-only.
+# rustc's final wasm layout is sensitive to the canonical target-sysroot path
+# even when every embedded path is remapped. Copy the immutable wasm target
+# libraries to a fixed path; a symlink is insufficient because rustc resolves
+# it. Host-side build scripts and proc macros keep using the installed sysroot.
 rust_sysroot="$(rustc --print sysroot)"
 rust_release="$(rustc -vV | sed -n 's/^release: //p')"
 rust_host="$(rustc -vV | sed -n 's/^host: //p')"
@@ -25,16 +26,26 @@ case "${rust_release}-${rust_host}" in
   *[!A-Za-z0-9._-]*) echo "unsafe Rust toolchain identity" >&2; exit 1 ;;
 esac
 stable_sysroot="/tmp/kyyn-component-sysroot-${rust_release}-${rust_host}"
-if test -e "$stable_sysroot" || test -L "$stable_sysroot"; then
-  stable_release="$("$stable_sysroot/bin/rustc" -vV 2>/dev/null | sed -n 's/^release: //p')"
-  stable_host="$("$stable_sysroot/bin/rustc" -vV 2>/dev/null | sed -n 's/^host: //p')"
-  if test "$stable_release" != "$rust_release" || test "$stable_host" != "$rust_host"; then
-    echo "$stable_sysroot is not the expected Rust toolchain; remove it and retry" >&2
+stable_target="$stable_sysroot/lib/rustlib/wasm32-unknown-unknown"
+installed_target="$rust_sysroot/lib/rustlib/wasm32-unknown-unknown"
+exec 9>"/tmp/kyyn-component-sysroot.lock"
+flock 9
+if test -L "$stable_sysroot"; then
+  echo "$stable_sysroot is a stale symlink; remove it and retry" >&2
+  exit 1
+fi
+if test -e "$stable_sysroot"; then
+  if ! test -d "$stable_target" || ! test -O "$stable_sysroot"; then
+    echo "$stable_sysroot is not a build sysroot owned by this user" >&2
     exit 1
   fi
 else
-  ln -s "$rust_sysroot" "$stable_sysroot"
+  staged_sysroot="$(mktemp -d -p /tmp kyyn-component-sysroot-stage.XXXXXX)"
+  mkdir -p "$staged_sysroot/lib/rustlib"
+  cp -a "$installed_target" "$staged_sysroot/lib/rustlib/"
+  mv "$staged_sysroot" "$stable_sysroot"
 fi
+flock -u 9
 
 guests="sweep git-repo kb pack salesforce graph-calendar graph-mail graph-chats graph-meetings sharepoint-file"
 packages=""
@@ -47,7 +58,7 @@ done
   export CARGO_TARGET_DIR="$repro"
   export KYYN_REPRO_REPO_ROOT="$repo_root"
   export RUSTC_WRAPPER="./scripts/repro-rustc.sh"
-  export RUSTFLAGS="--sysroot=${stable_sysroot} \
+  export CARGO_TARGET_WASM32_UNKNOWN_UNKNOWN_RUSTFLAGS="--sysroot=${stable_sysroot} \
 --remap-path-prefix=${stable_sysroot}=/rust \
 -C metadata=kyyn-first-party-tap-v1"
   cargo build --locked --quiet --release --target wasm32-unknown-unknown $packages

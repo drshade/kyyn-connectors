@@ -10,7 +10,7 @@
         (name: "sweep", summary: "Glob a local directory tree into hashed, versioned evidence.",
          namespace: "file",
          component: "components/sweep.wasm",
-         component_sha256: "e75adf50e6ece1b2e9b49c15d2d6f660c91331779e801cc544cf46d0392443c6",
+         component_sha256: "a578c2b9eeeb754162bcd42923872e04456c0e9f084c8661f3b4700b0fdbd5c2",
          config: [
             (name: "root", doc: "The directory tree to sweep (~ expands).", ty: Path, required: true, example: Some("~/notes")),
             (name: "patterns", doc: "Globs relative to root; * stays within one level, ** crosses.", ty: StrList, example: Some("**/*.md"), default: Some("**/*")),
@@ -21,7 +21,7 @@
          namespace: "kb",
          capabilities: (repo: true),
          component: "components/kb.wasm",
-         component_sha256: "907dd031eb9b96d0424a9a6c20144c8e7135b8e1c49a61e9bbea236b378e5fb6",
+         component_sha256: "c33132bda0625c94f4b042e12c841f94ab251720d052eb264d4d128a967c5855",
          config: [
             (name: "url", doc: "Git URL or local path of the remote KB's ontology repo.", required: true, example: Some("git@github.com:team/their-kb.git")),
             (name: "git_ref", doc: "Branch or tag to read.", default: Some("main")),
@@ -31,7 +31,7 @@
          namespace: "repo",
          capabilities: (repo: true),
          component: "components/git-repo.wasm",
-         component_sha256: "601453d706142c4ba77871165877be6696b8457634177d22db1f3cf1eb39ad26",
+         component_sha256: "ba71fff64c7a9a4a1376d00308e2c353e15f3aa5973108586d37839b31067184",
          config: [
             (name: "url", doc: "Git URL or local path of the repository.", required: true, example: Some("https://github.com/org/repo")),
             (name: "git_ref", doc: "Branch or tag to read; HEAD = the default branch.", default: Some("HEAD")),
@@ -43,7 +43,7 @@
          namespace: "pack",
          capabilities: (repo: true),
          component: "components/pack.wasm",
-         component_sha256: "1f2152dec95976ffb374ced5536a0150d17e41806120edf0bfcd9d4dc5952dd8",
+         component_sha256: "6cece9ca6fe3446b3c8699afc9d197801250642e2752e64ee91763dcf089df46",
          config: [
             (name: "template", doc: "The template directory to import (e.g. gbrain).", required: true, example: Some("gbrain")),
             (name: "rev", doc: "Full 40-hex commit OID of the templates repo — bump by proposal to take updates.", required: true, example: Some("90fd6c9f3288717e2de0572a8f33d653661b32cf")),
@@ -53,7 +53,7 @@
          namespace: "sf",
          capabilities: (network: ["config:instance_url"], auth: Some("salesforce")),
          component: "components/salesforce.wasm",
-         component_sha256: "92a61a35621e8c1b31f410530dc79c648b2588e883844a04701e14acce751304",
+         component_sha256: "d728e56a5e5ad3171eb7b8413c50cf9b20fa72035dc11df5c6afe4acfcdcd15e",
          config: [
             (name: "instance_url", doc: "The org's My Domain URL.", required: true, example: Some("https://acme.my.salesforce.com")),
             (name: "client_id", doc: "The Connected App's consumer key (device flow enabled; not a secret).", required: true, example: Some("3MVG9…")),
@@ -66,7 +66,7 @@
          namespace: "graph",
          capabilities: (network: ["graph.microsoft.com", "login.microsoftonline.com"], auth: Some("ms-graph")),
          component: "components/graph-mail.wasm",
-         component_sha256: "1d264cbce6e477a397e978532a0a0ec187f857fdc245c8127733c8264fa74fd4",
+         component_sha256: "de6ce7a3df92ba145af29ab3478fc8b89d1463da0f197e6971c973c9c9ff5561",
          config: [
             (name: "mail_filter", doc: "OData $filter fragment ANDed onto the mail window — e.g. from/emailAddress/address eq 'x@y.com'.", example: Some("contains(subject, 'Sales Update')")),
             (name: "owner_addresses", doc: "Your own addresses (lowercased) — classifies sent vs received.", ty: StrList, example: Some("you@company.com")),
@@ -77,7 +77,7 @@
          namespace: "graph",
          capabilities: (network: ["graph.microsoft.com", "login.microsoftonline.com"], auth: Some("ms-graph")),
          component: "components/graph-calendar.wasm",
-         component_sha256: "2ecb1282afc546c681f8443760e9861b926fdba4110785960c583381ff69b630",
+         component_sha256: "033efa7cc04c44950d319c4362c5f58258fd9066642ba72a6068984d479e5bdd",
          config: [
             (name: "owner_addresses", doc: "Your own addresses (lowercased).", ty: StrList, example: Some("you@company.com")),
             (name: "client_id", doc: "Azure app id — leave empty for the shared multi-tenant kyyn app.", default: Some("53ddb21b-849f-45a3-8168-8a0e555f386f")),
@@ -87,7 +87,7 @@
          namespace: "graph",
          capabilities: (network: ["graph.microsoft.com", "login.microsoftonline.com"], auth: Some("ms-graph")),
          component: "components/graph-meetings.wasm",
-         component_sha256: "6008950dd40c8a51ce0a4fbcbfb95f326644a2e8ae73e23b246a028d4874723b",
+         component_sha256: "33c1fb3b3985c821ab4085f5ef09df078e5d2aec6a95abdddcc310eb0133dc70",
          config: [
             (name: "owner_addresses", doc: "Your own addresses (lowercased).", ty: StrList, example: Some("you@company.com")),
             (name: "client_id", doc: "Azure app id — leave empty for the shared multi-tenant kyyn app.", default: Some("53ddb21b-849f-45a3-8168-8a0e555f386f")),
@@ -97,7 +97,7 @@
          namespace: "graph",
          capabilities: (network: ["graph.microsoft.com", "login.microsoftonline.com"], auth: Some("ms-graph")),
          component: "components/graph-chats.wasm",
-         component_sha256: "30146674ca452c875f31cf9b386e6a8719b0731dc84323fd4edbeb2a4afa349f",
+         component_sha256: "2b1f37e2839b131d23b3473fd5f1f1d9bf04c39895c7eebb56a8a03d71895d84",
          config: [
             (name: "owner_addresses", doc: "Your own addresses (lowercased).", ty: StrList, example: Some("you@company.com")),
             (name: "client_id", doc: "Azure app id — leave empty for the shared multi-tenant kyyn app.", default: Some("53ddb21b-849f-45a3-8168-8a0e555f386f")),
@@ -107,7 +107,7 @@
          namespace: "sharepoint",
          capabilities: (network: ["graph.microsoft.com", "login.microsoftonline.com", "config:url", "*.sharepoint.com"], auth: Some("ms-graph")),
          component: "components/sharepoint-file.wasm",
-         component_sha256: "c3da7ec3ed9058e63d2807c0b76c3918ff3909d1993f8d750a48930c9ec6181a",
+         component_sha256: "9b6fa97006a46d66f6881a9f345243ad7e4ef7d3607acc738e4fa977ddeaca33",
          config: [
             (name: "url", doc: "The sharing link of the tracked file or folder.", required: true, example: Some("https://acme.sharepoint.com/:f:/r/sites/…")),
             (name: "patterns", doc: "Folder targets: globs over folder-relative paths.", ty: StrList, example: Some("**/*.xlsx"), default: Some("**/*")),
