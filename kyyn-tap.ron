@@ -66,7 +66,7 @@
          namespace: "graph",
          capabilities: (network: ["graph.microsoft.com", "login.microsoftonline.com"], auth: Some("ms-graph")),
          component: "components/graph-mail.wasm",
-         component_sha256: "151d9482efe0d0c68606357de04fa0aa093fdd68dd5a3703199b5428b6291501",
+         component_sha256: "66fd3b80650ef3c8ca8e3a45e3d5e792f6fbbce37cdcd99488721c29c091a31c",
          config: [
             (name: "mail_filter", doc: "OData $filter fragment ANDed onto the mail window — e.g. from/emailAddress/address eq 'x@y.com'.", example: Some("contains(subject, 'Sales Update')")),
             (name: "owner_addresses", doc: "Your own addresses (lowercased) — classifies sent vs received.", ty: StrList, example: Some("you@company.com")),
@@ -87,7 +87,7 @@
          namespace: "graph",
          capabilities: (network: ["graph.microsoft.com", "login.microsoftonline.com"], auth: Some("ms-graph")),
          component: "components/graph-meetings.wasm",
-         component_sha256: "6020dc11c141d8e3561ff7a8d175517027d593f167064a15a6101234c9e03504",
+         component_sha256: "cb59d1cabfe9dadfc8481fd71b0fe46ec0bde21b83d882eb2828f4739bf2fb1c",
          config: [
             (name: "owner_addresses", doc: "Your own addresses (lowercased).", ty: StrList, example: Some("you@company.com")),
             (name: "client_id", doc: "Azure app id — leave empty for the shared multi-tenant kyyn app.", default: Some("53ddb21b-849f-45a3-8168-8a0e555f386f")),

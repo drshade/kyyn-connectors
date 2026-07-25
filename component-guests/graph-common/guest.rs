@@ -608,18 +608,21 @@ mod guest {
             } else {
                 let relative =
                     format!("attachments/{}", safe_attachment_name(&meta.id, &name));
-                let (status, stored) = http::fetch_to_evidence(
-                    &request(
-                        Method::Get,
-                        attachment_value_url(message_id, &meta.id),
-                        None,
-                        Some(ACCESS_TOKEN),
-                    ),
-                    &relative,
-                )
-                .map_err(|error| error.message)?;
-                match status {
+                let url = attachment_value_url(message_id, &meta.id);
+                let mut attachment_request =
+                    request(Method::Get, url.clone(), None, Some(ACCESS_TOKEN));
+                attachment_request.max_response_bytes = MAX_ATTACHMENT_BYTES;
+                let mut response =
+                    http::fetch(&attachment_request).map_err(|error| error.message)?;
+                if response.status == 401 {
+                    refresh(config)?;
+                    response = http::fetch(&attachment_request).map_err(|error| error.message)?;
+                }
+                match response.status {
                     200..=299 => {
+                        let file = evidence::open(&relative)?;
+                        file.write(&response.body)?;
+                        let stored = file.finish()?;
                         attachment.file = Some(relative);
                         attachment.sha256 = Some(stored.sha256);
                         attachment.size = Some(stored.bytes);
