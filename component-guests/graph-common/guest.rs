@@ -430,12 +430,12 @@ mod guest {
         let items = events
             .iter()
             .map(|event| {
-                let canonical = serde_json::to_vec(event).map_err(|error| error.to_string())?;
                 Ok(Item {
                     id: event.id.clone(),
                     kind: "event".into(),
                     version: None,
-                    content_hash: format!("{:x}", sha2::Sha256::digest(&canonical)),
+                    content_hash: kyyn_plugin_bundle::canonical_record_sha256(event)
+                        .map_err(|error| error.to_string())?,
                     files: vec!["events.json".into()],
                     file_hashes: Vec::new(),
                     locator: Some(event.id.clone()),
@@ -716,12 +716,12 @@ mod guest {
         let items = emails
             .iter()
             .map(|email| {
-                let canonical = serde_json::to_vec(email).map_err(|error| error.to_string())?;
                 Ok(Item {
                     id: email.id.clone(),
                     kind: "email".into(),
                     version: None,
-                    content_hash: format!("{:x}", sha2::Sha256::digest(&canonical)),
+                    content_hash: kyyn_plugin_bundle::canonical_record_sha256(email)
+                        .map_err(|error| error.to_string())?,
                     files: std::iter::once("emails.json".into())
                         .chain(
                             email
@@ -933,13 +933,12 @@ mod guest {
         let mut items = Vec::new();
         for chat in &chats {
             for message in &chat.messages {
-                let canonical =
-                    serde_json::to_vec(message).map_err(|error| error.to_string())?;
                 items.push(Item {
                     id: message.id.clone(),
                     kind: "chat-message".into(),
                     version: None,
-                    content_hash: format!("{:x}", sha2::Sha256::digest(&canonical)),
+                    content_hash: kyyn_plugin_bundle::canonical_record_sha256(message)
+                        .map_err(|error| error.to_string())?,
                     files: vec!["chats.json".into()],
                     file_hashes: Vec::new(),
                     locator: Some(message.id.clone()),
@@ -1268,12 +1267,12 @@ mod guest {
             .iter()
             .zip(hashes)
             .map(|(meeting, hashes)| {
-                let canonical = serde_json::to_vec(meeting).map_err(|error| error.to_string())?;
                 Ok(Item {
                     id: meeting.id.clone(),
                     kind: "meeting".into(),
                     version: None,
-                    content_hash: format!("{:x}", sha2::Sha256::digest(&canonical)),
+                    content_hash: kyyn_plugin_bundle::canonical_record_sha256(meeting)
+                        .map_err(|error| error.to_string())?,
                     files: std::iter::once("meetings.json".into())
                         .chain(hashes.iter().map(|(path, _)| path.clone()))
                         .collect(),

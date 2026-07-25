@@ -14,7 +14,6 @@ mod guest {
     use bindings::kyyn::tap::http::{self, Method, Request, Response};
     use bindings::kyyn::tap::{control, evidence, secrets};
     use serde::Deserialize;
-    use sha2::Digest as _;
 
     const ACCESS_TOKEN: &str = "sf-access-token";
     const REFRESH_TOKEN: &str = "sf-refresh-token";
@@ -325,24 +324,31 @@ mod guest {
             }
         }
 
+        for (index, record) in records.iter_mut().enumerate() {
+            kyyn_plugin_bundle::ensure_locator_id(
+                record,
+                &config.id_field,
+                format!("row-{index}"),
+            )?;
+        }
         let bundle = serde_json::to_vec_pretty(&records).map_err(|error| error.to_string())?;
         let file = evidence::open("records.json")?;
         file.write(&bundle)?;
         let _stored = file.finish()?;
         let mut items = Vec::new();
-        for (index, record) in records.iter().enumerate() {
-            let id = record[&config.id_field]
+        for record in &records {
+            let id = record["id"]
                 .as_str()
-                .map(str::to_string)
-                .unwrap_or_else(|| format!("row-{index}"));
-            let canonical = serde_json::to_vec(record).map_err(|error| error.to_string())?;
+                .expect("ensure_locator_id inserted a string")
+                .to_string();
             let name = record["Name"].as_str().unwrap_or_default();
             let sobject = record["attributes"]["type"].as_str().unwrap_or("record");
             items.push(Item {
                 id: id.clone(),
                 kind: config.kind.clone(),
                 version: None,
-                content_hash: format!("{:x}", sha2::Sha256::digest(&canonical)),
+                content_hash: kyyn_plugin_bundle::canonical_record_sha256(record)
+                    .map_err(|error| error.to_string())?,
                 files: vec!["records.json".into()],
                 file_hashes: Vec::new(),
                 locator: Some(id),

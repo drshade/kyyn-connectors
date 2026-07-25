@@ -737,6 +737,7 @@ dependencies = [
  "base64",
  "chrono",
  "glob",
+ "kyyn-plugin-bundle",
  "ron",
  "serde",
  "serde_json",
@@ -751,6 +752,7 @@ dependencies = [
  "base64",
  "chrono",
  "glob",
+ "kyyn-plugin-bundle",
  "ron",
  "serde",
  "serde_json",
@@ -765,6 +767,7 @@ dependencies = [
  "base64",
  "chrono",
  "glob",
+ "kyyn-plugin-bundle",
  "ron",
  "serde",
  "serde_json",
@@ -779,6 +782,7 @@ dependencies = [
  "base64",
  "chrono",
  "glob",
+ "kyyn-plugin-bundle",
  "ron",
  "serde",
  "serde_json",
@@ -810,10 +814,10 @@ dependencies = [
 name = "kyyn-component-salesforce"
 version = "0.1.0"
 dependencies = [
+ "kyyn-plugin-bundle",
  "ron",
  "serde",
  "serde_json",
- "sha2",
  "wit-bindgen",
 ]
 
@@ -824,6 +828,7 @@ dependencies = [
  "base64",
  "chrono",
  "glob",
+ "kyyn-plugin-bundle",
  "ron",
  "serde",
  "serde_json",
@@ -851,6 +856,15 @@ dependencies = [
  "ron",
  "rust_decimal",
  "schemars",
+ "serde",
+ "serde_json",
+ "sha2",
+]
+
+[[package]]
+name = "kyyn-plugin-bundle"
+version = "0.1.0"
+dependencies = [
  "serde",
  "serde_json",
  "sha2",
@@ -959,6 +973,8 @@ dependencies = [
  "kyyn-plugin-sweep",
  "ron",
  "serde",
+ "sha2",
+ "wasmparser",
 ]
 
 [[package]]

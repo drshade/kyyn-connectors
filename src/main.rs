@@ -28,6 +28,7 @@ fn main() {
 #[cfg(test)]
 mod manifest_drift {
     use serde::Deserialize;
+    use sha2::Digest as _;
 
     // A tolerant local mirror of the manifest shapes (the published
     // kyyn-core this crate builds against may lag the config-spec and
@@ -43,8 +44,19 @@ mod manifest_drift {
     #[derive(Deserialize)]
     struct Plugin {
         name: String,
+        component: String,
+        component_sha256: String,
+        #[serde(default)]
+        capabilities: Capabilities,
         #[serde(default)]
         config: Vec<Field>,
+    }
+    #[derive(Deserialize, Default)]
+    #[serde(default, deny_unknown_fields)]
+    struct Capabilities {
+        network: Vec<String>,
+        auth: Option<String>,
+        repo: bool,
     }
     #[derive(Deserialize, Default)]
     #[serde(default, deny_unknown_fields)]
@@ -56,7 +68,7 @@ mod manifest_drift {
         example: Option<String>,
         default: Option<String>,
     }
-    #[derive(Deserialize, Default, PartialEq)]
+    #[derive(Clone, Copy, Deserialize, Default, PartialEq)]
     enum Ty {
         #[default]
         Str,
@@ -67,15 +79,19 @@ mod manifest_drift {
         Path,
     }
 
+    fn manifest() -> Manifest {
+        let text = std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/kyyn-tap.ron"))
+            .expect("kyyn-tap.ron");
+        ron::from_str(&text).expect("manifest parses")
+    }
+
     /// THE drift guard: every plugin's declared config spec, filled with its
     /// own examples/defaults, must assemble into a config the plugin's real
     /// validate_config accepts — a spec that promises a field the code
     /// rejects (or mistypes) fails here, not in an owner's install form.
     #[test]
     fn declared_config_specs_satisfy_the_plugins() {
-        let text = std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/kyyn-tap.ron"))
-            .expect("kyyn-tap.ron");
-        let manifest: Manifest = ron::from_str(&text).expect("manifest parses");
+        let manifest = manifest();
         assert_eq!(manifest.plugins.len(), 10);
         for plugin in &manifest.plugins {
             let mut parts: Vec<String> = Vec::new();
@@ -118,6 +134,90 @@ mod manifest_drift {
                 "{}: spec-assembled config rejected: {:?}\n  config: {config}",
                 plugin.name,
                 result.err()
+            );
+        }
+    }
+
+    #[test]
+    fn committed_component_digests_match_the_manifest() {
+        for plugin in manifest().plugins {
+            let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join(&plugin.component);
+            let bytes = std::fs::read(&path)
+                .unwrap_or_else(|error| panic!("reading {}: {error}", path.display()));
+            assert_eq!(
+                format!("{:x}", sha2::Sha256::digest(bytes)),
+                plugin.component_sha256,
+                "{} has a stale component_sha256 pin",
+                plugin.name
+            );
+        }
+    }
+
+    #[test]
+    fn vendored_wit_matches_the_frozen_engine_contract() {
+        const FROZEN_TAP_WIT_SHA256: &str =
+            "b8ca45274112e5e2eddbb722b9ad5e67f50db19b5a5f1b7606aa02a2e93e58df";
+        assert_eq!(
+            format!(
+                "{:x}",
+                sha2::Sha256::digest(include_bytes!("../wit/tap.wit"))
+            ),
+            FROZEN_TAP_WIT_SHA256,
+            "wit/tap.wit drifted from kyyn's frozen kyyn:tap@1 contract"
+        );
+    }
+
+    #[test]
+    fn component_imports_are_a_subset_of_declared_capabilities() {
+        for plugin in manifest().plugins {
+            let mut allowed = std::collections::BTreeSet::from(["control", "evidence"]);
+            if !plugin.capabilities.network.is_empty() {
+                allowed.insert("http");
+            }
+            if plugin.capabilities.auth.is_some() {
+                allowed.insert("secrets");
+            }
+            if plugin.capabilities.repo {
+                allowed.insert("repo");
+            }
+            if plugin.config.iter().any(|field| field.ty == Ty::Path) {
+                allowed.insert("local");
+            }
+
+            let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join(&plugin.component);
+            let bytes = std::fs::read(&path)
+                .unwrap_or_else(|error| panic!("reading {}: {error}", path.display()));
+            let mut level = 0usize;
+            let mut imports = std::collections::BTreeSet::new();
+            for payload in wasmparser::Parser::new(0).parse_all(&bytes) {
+                match payload
+                    .unwrap_or_else(|error| panic!("parsing {} component: {error}", plugin.name))
+                {
+                    wasmparser::Payload::Version { .. } => level += 1,
+                    wasmparser::Payload::End(_) => level -= 1,
+                    wasmparser::Payload::ComponentImportSection(section) if level == 1 => {
+                        for import in section {
+                            let name = import.expect("component import").name.name;
+                            let interface = name
+                                .strip_prefix("kyyn:tap/")
+                                .and_then(|name| name.split('@').next())
+                                .unwrap_or(name);
+                            imports.insert(interface.to_string());
+                        }
+                    }
+                    _ => {}
+                }
+            }
+            let excess = imports
+                .iter()
+                .filter(|import| !allowed.contains(import.as_str()))
+                .cloned()
+                .collect::<Vec<_>>();
+            assert!(
+                excess.is_empty(),
+                "{} imports undeclared capabilities {excess:?}; imports={imports:?}, \
+                 allowed={allowed:?}",
+                plugin.name
             );
         }
     }

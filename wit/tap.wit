@@ -1,11 +1,22 @@
 package kyyn:tap@1.0.0;
 
+/// Ambient-authority-free utilities every plugin may use.
 interface control {
+    /// One short progress line, forwarded live to the owner's surface.
     progress: func(message: string);
+
+    /// Wall-clock milliseconds since the Unix epoch. Taps are explicitly
+    /// non-deterministic; this is for window math and backoff, not replay.
     now-ms: func() -> u64;
+
+    /// Cooperative wait (retry backoff, poll intervals). The host may wake
+    /// early; the call deadline keeps ticking.
     sleep-ms: func(duration-ms: u64);
 }
 
+/// Host-mediated HTTP. Every request is checked against the plugin's
+/// consented host allowlist before any connection is made; a denied host is
+/// an error the guest can observe, never a silent block.
 interface http {
     enum method {
         get,
@@ -15,10 +26,19 @@ interface http {
     record request {
         method: method,
         url: string,
+        /// Ordered request headers. The host refuses `authorization` values
+        /// it cannot attribute (see `secret-authorization`), hop-by-hop
+        /// headers, and oversized header blocks.
         headers: list<tuple<string, string>>,
         body: option<list<u8>>,
+        /// When set, the host reads this secret from the plugin's realm and
+        /// sends `Authorization: Bearer <value>` without the value ever
+        /// entering guest memory. Mutually exclusive with a guest-supplied
+        /// `authorization` header.
         secret-authorization: option<string>,
+        /// Hard ceiling on the buffered response body.
         max-response-bytes: u64,
+        /// Per-request ceiling; the verb deadline still applies overall.
         timeout-ms: u64,
     }
 
@@ -29,10 +49,15 @@ interface http {
     }
 
     enum error-kind {
+        /// URL host is outside the consented allowlist.
         denied-host,
+        /// Request or connect exceeded its time budget.
         timeout,
+        /// Response body exceeded `max-response-bytes`.
         too-large,
+        /// DNS/TLS/transport failure.
         transport,
+        /// The request itself was malformed or used a refused header.
         invalid,
     }
 
@@ -41,8 +66,12 @@ interface http {
         message: string,
     }
 
+    /// Buffered request/response for API traffic.
     fetch: func(request: request) -> result<response, http-error>;
 
+    /// Download a response body straight into an evidence file without the
+    /// bytes crossing the guest boundary. The URL-to-file lineage is
+    /// host-attested. `path` is an out-dir-relative evidence path.
     record stored-file {
         sha256: string,
         bytes: u64,
@@ -51,13 +80,23 @@ interface http {
     fetch-to-evidence: func(request: request, path: string) -> result<tuple<u16, stored-file>, http-error>;
 }
 
+/// Realm-scoped credential blobs, replacing the mounted secrets directory.
+/// The host resolves the realm exactly as before (explicit declaration →
+/// config-derived → describe → plugin name), holds the realm lock for the
+/// duration of the call, and grants this interface only to auth-declaring
+/// plugins on auth and fetch calls.
 interface secrets {
+    /// `name` is a single path-safe token.
     get: func(name: string) -> option<list<u8>>;
     put: func(name: string, value: list<u8>) -> result<_, string>;
     delete: func(name: string);
 }
 
+/// Pinned-repository trees, replacing subprocess git. The host performs the
+/// clone/fetch with the owner's ordinary git authority; the guest sees only
+/// the resolved tree. Every `url` must equal a consented config value.
 interface repo {
+    /// `ls-remote` equivalent: the commit OID a ref currently points at.
     resolve: func(url: string, reference: string) -> result<string, string>;
 
     record entry {
@@ -66,9 +105,14 @@ interface repo {
     }
 
     resource tree {
+        /// The resolved commit OID of this tree.
         head: func() -> string;
+        /// Every regular file, sorted by path. Symlinks and submodules are
+        /// never listed. `.git` never appears.
         entries: func() -> list<entry>;
+        /// Read one file, refused above `max-bytes`.
         read: func(path: string, max-bytes: u64) -> result<list<u8>, string>;
+        /// Copy one file into evidence without crossing the guest boundary.
         copy-to-evidence: func(path: string, dest: string, max-bytes: u64) -> result<stored-file, string>;
     }
 
@@ -77,13 +121,18 @@ interface repo {
         bytes: u64,
     }
 
+    /// Materialize `url` at `reference` (ref name, or full 40-hex OID).
     open: func(url: string, reference: string) -> result<tree, string>;
 }
 
+/// Consented local directory roots (the `Path`-typed config fields the
+/// owner accepted), replacing read-only bind mounts. Paths are host paths;
+/// the host expands `~` and refuses anything that escapes a consented root.
 interface local {
     record entry {
         path: string,
         bytes: u64,
+        /// Milliseconds since epoch, 0 when unavailable.
         modified-ms: u64,
     }
 
@@ -92,11 +141,16 @@ interface local {
         bytes: u64,
     }
 
+    /// Every regular file under the root, sorted. Symlinks are neither
+    /// followed nor listed.
     entries: func(root: string) -> result<list<entry>, string>;
     read: func(root: string, path: string, max-bytes: u64) -> result<list<u8>, string>;
     copy-to-evidence: func(root: string, path: string, dest: string, max-bytes: u64) -> result<stored-file, string>;
 }
 
+/// Host-owned evidence output, replacing the writable out-dir. Files exist
+/// only through this interface, so digests are computed by the host as the
+/// bytes arrive and containment is structural rather than re-checked.
 interface evidence {
     record stored-file {
         sha256: string,
@@ -105,12 +159,21 @@ interface evidence {
 
     resource file {
         write: func(chunk: list<u8>) -> result<_, string>;
+        /// Flush, close and return the host-computed digest — the last call
+        /// on the handle. The err carries an I/O failure (flush, hash
+        /// close-out, rename). After a successful finish, `write` returns an
+        /// error; dropping the handle without a successful finish discards
+        /// the file, which then may not be referenced by an item.
         finish: func() -> result<stored-file, string>;
     }
 
+    /// `path` is out-dir-relative, gated against traversal, unique per run.
     open: func(path: string) -> result<file, string>;
 }
 
+/// The plugin surface. The WIT package version replaces the old
+/// `Describe.protocol` field: an engine either implements the version a
+/// component names or fails closed.
 interface api {
     enum fetch-style {
         windowed,
@@ -126,6 +189,7 @@ interface api {
     }
 
     record window {
+        /// RFC3339 UTC, half-open [start, until).
         start: string,
         until: string,
     }
@@ -137,8 +201,10 @@ interface api {
     }
 
     record fetch-request {
+        /// Canonical RON config text, exactly as consented in sources.ron.
         config: string,
         spec: run-spec,
+        /// Engine-owned; advances only when a run manifest publishes.
         checkpoint: option<string>,
     }
 
@@ -163,6 +229,8 @@ interface api {
         verification-url: string,
         user-code: string,
         expires-in-secs: u64,
+        /// Opaque continuation the engine round-trips to auth-poll — the
+        /// sanctioned carrier of cross-call sign-in state.
         handle: string,
     }
 
@@ -187,6 +255,10 @@ interface api {
     fetch: func(request: fetch-request) -> result<fetch-result, string>;
 }
 
+/// A tap plugin component. A component's ACTUAL import set — not this
+/// world's maximal one — is its capability signature: the engine grants
+/// exactly the interfaces the consented manifest declares and refuses any
+/// component importing beyond them.
 world tap {
     import control;
     import http;
@@ -194,5 +266,6 @@ world tap {
     import repo;
     import local;
     import evidence;
+
     export api;
 }

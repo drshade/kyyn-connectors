@@ -20,6 +20,8 @@ kyyn-plugin-sweep = { path = "crates/kyyn-plugin-sweep" }
 [dev-dependencies]
 ron = "0.12"
 serde = { version = "1", features = ["derive"] }
+sha2 = "0.10"
+wasmparser = "=0.251.0"
 
 [workspace]
 resolver = "2"
@@ -35,6 +37,7 @@ members = [
     "component-guests/sharepoint-file",
     "component-guests/sweep",
     "crates/kyyn-plugin-git",
+    "crates/kyyn-plugin-bundle",
     "crates/kyyn-plugin-graph",
     "crates/kyyn-plugin-kb",
     "crates/kyyn-plugin-pack",

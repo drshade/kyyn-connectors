@@ -53,7 +53,7 @@
          namespace: "sf",
          capabilities: (network: ["config:instance_url"], auth: Some("salesforce")),
          component: "components/salesforce.wasm",
-         component_sha256: "d728e56a5e5ad3171eb7b8413c50cf9b20fa72035dc11df5c6afe4acfcdcd15e",
+         component_sha256: "6d532c574f7a48b96fa87686e83383480e4c55167b1e3026a383c4f13c0f6ab3",
          config: [
             (name: "instance_url", doc: "The org's My Domain URL.", required: true, example: Some("https://acme.my.salesforce.com")),
             (name: "client_id", doc: "The Connected App's consumer key (device flow enabled; not a secret).", required: true, example: Some("3MVG9…")),
@@ -66,7 +66,7 @@
          namespace: "graph",
          capabilities: (network: ["graph.microsoft.com", "login.microsoftonline.com"], auth: Some("ms-graph")),
          component: "components/graph-mail.wasm",
-         component_sha256: "de6ce7a3df92ba145af29ab3478fc8b89d1463da0f197e6971c973c9c9ff5561",
+         component_sha256: "bc6b383189304b694c32ad36e57e34ab4238e1c1acfb4de2bf76958e1111be6f",
          config: [
             (name: "mail_filter", doc: "OData $filter fragment ANDed onto the mail window — e.g. from/emailAddress/address eq 'x@y.com'.", example: Some("contains(subject, 'Sales Update')")),
             (name: "owner_addresses", doc: "Your own addresses (lowercased) — classifies sent vs received.", ty: StrList, example: Some("you@company.com")),
@@ -77,7 +77,7 @@
          namespace: "graph",
          capabilities: (network: ["graph.microsoft.com", "login.microsoftonline.com"], auth: Some("ms-graph")),
          component: "components/graph-calendar.wasm",
-         component_sha256: "033efa7cc04c44950d319c4362c5f58258fd9066642ba72a6068984d479e5bdd",
+         component_sha256: "6c801d67c833cd68953a7e5805237ccb91989c5c2455ddc9a97e7adbe2c0e104",
          config: [
             (name: "owner_addresses", doc: "Your own addresses (lowercased).", ty: StrList, example: Some("you@company.com")),
             (name: "client_id", doc: "Azure app id — leave empty for the shared multi-tenant kyyn app.", default: Some("53ddb21b-849f-45a3-8168-8a0e555f386f")),
@@ -87,7 +87,7 @@
          namespace: "graph",
          capabilities: (network: ["graph.microsoft.com", "login.microsoftonline.com"], auth: Some("ms-graph")),
          component: "components/graph-meetings.wasm",
-         component_sha256: "33c1fb3b3985c821ab4085f5ef09df078e5d2aec6a95abdddcc310eb0133dc70",
+         component_sha256: "536c1312862f1b1fa4b1b262282b768fe8b2fcab23125cc99b2761d6b37b2099",
          config: [
             (name: "owner_addresses", doc: "Your own addresses (lowercased).", ty: StrList, example: Some("you@company.com")),
             (name: "client_id", doc: "Azure app id — leave empty for the shared multi-tenant kyyn app.", default: Some("53ddb21b-849f-45a3-8168-8a0e555f386f")),
@@ -97,7 +97,7 @@
          namespace: "graph",
          capabilities: (network: ["graph.microsoft.com", "login.microsoftonline.com"], auth: Some("ms-graph")),
          component: "components/graph-chats.wasm",
-         component_sha256: "2b1f37e2839b131d23b3473fd5f1f1d9bf04c39895c7eebb56a8a03d71895d84",
+         component_sha256: "72207ac39c7e6e8f1bd3e6e81351d967e8bfc262347f78d30bd2cd20eac53437",
          config: [
             (name: "owner_addresses", doc: "Your own addresses (lowercased).", ty: StrList, example: Some("you@company.com")),
             (name: "client_id", doc: "Azure app id — leave empty for the shared multi-tenant kyyn app.", default: Some("53ddb21b-849f-45a3-8168-8a0e555f386f")),
@@ -105,9 +105,9 @@
          ]),
         (name: "sharepoint-file", summary: "A tracked SharePoint/OneDrive file or folder, snapshot-fetched.",
          namespace: "sharepoint",
-         capabilities: (network: ["graph.microsoft.com", "login.microsoftonline.com", "config:url", "*.sharepoint.com"], auth: Some("ms-graph")),
+         capabilities: (network: ["graph.microsoft.com", "login.microsoftonline.com", "*.sharepoint.com"], auth: Some("ms-graph")),
          component: "components/sharepoint-file.wasm",
-         component_sha256: "9b6fa97006a46d66f6881a9f345243ad7e4ef7d3607acc738e4fa977ddeaca33",
+         component_sha256: "d02d1c5d96fc10ed37c4f242e24ddf9e4499891039ce3d928952e73a48be6f0a",
          config: [
             (name: "url", doc: "The sharing link of the tracked file or folder.", required: true, example: Some("https://acme.sharepoint.com/:f:/r/sites/…")),
             (name: "patterns", doc: "Folder targets: globs over folder-relative paths.", ty: StrList, example: Some("**/*.xlsx"), default: Some("**/*")),
