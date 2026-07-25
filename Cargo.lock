@@ -848,11 +848,12 @@ dependencies = [
 
 [[package]]
 name = "kyyn-core"
-version = "0.1.11"
+version = "0.1.21"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "30311cf3bf4b03df41288ab83649574b0c6e5c0ac34337be51b8d97420286155"
+checksum = "1767ff2213e1b0b08cbcc5efc5051a5264ee7a8662fd69bbf53909485153f37f"
 dependencies = [
  "chrono",
+ "kyyn-schema-macros",
  "ron",
  "rust_decimal",
  "schemars",
@@ -971,10 +972,19 @@ dependencies = [
  "kyyn-plugin-pack",
  "kyyn-plugin-salesforce",
  "kyyn-plugin-sweep",
- "ron",
- "serde",
  "sha2",
  "wasmparser",
+]
+
+[[package]]
+name = "kyyn-schema-macros"
+version = "0.1.21"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "08a3be42bc85ce6c02eedc78c65a9c4ca21c67335cd01aa7c0ac27bfa80f6b42"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn 2.0.118",
 ]
 
 [[package]]

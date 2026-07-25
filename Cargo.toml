@@ -9,7 +9,7 @@ license = "MIT OR Apache-2.0"
 publish = false
 
 [dependencies]
-kyyn-core = "0.1.11"
+kyyn-core = "0.1.21"
 kyyn-plugin-git = { path = "crates/kyyn-plugin-git" }
 kyyn-plugin-graph = { path = "crates/kyyn-plugin-graph" }
 kyyn-plugin-kb = { path = "crates/kyyn-plugin-kb" }
@@ -18,8 +18,6 @@ kyyn-plugin-salesforce = { path = "crates/kyyn-plugin-salesforce" }
 kyyn-plugin-sweep = { path = "crates/kyyn-plugin-sweep" }
 
 [dev-dependencies]
-ron = "0.12"
-serde = { version = "1", features = ["derive"] }
 sha2 = "0.10"
 wasmparser = "=0.251.0"
 

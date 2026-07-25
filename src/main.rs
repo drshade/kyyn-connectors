@@ -27,62 +27,13 @@ fn main() {
 
 #[cfg(test)]
 mod manifest_drift {
-    use serde::Deserialize;
+    use kyyn_core::tap::{TapConfigType, TapManifest};
     use sha2::Digest as _;
 
-    // A tolerant local mirror of the manifest shapes (the published
-    // kyyn-core this crate builds against may lag the config-spec and
-    // component fields; the ENGINE parses strictly).
-    #[derive(Deserialize)]
-    struct Manifest {
-        #[allow(dead_code)]
-        tap: u32,
-        #[allow(dead_code)]
-        binary: String,
-        plugins: Vec<Plugin>,
-    }
-    #[derive(Deserialize)]
-    struct Plugin {
-        name: String,
-        component: String,
-        component_sha256: String,
-        #[serde(default)]
-        capabilities: Capabilities,
-        #[serde(default)]
-        config: Vec<Field>,
-    }
-    #[derive(Deserialize, Default)]
-    #[serde(default, deny_unknown_fields)]
-    struct Capabilities {
-        network: Vec<String>,
-        auth: Option<String>,
-        repo: bool,
-    }
-    #[derive(Deserialize, Default)]
-    #[serde(default, deny_unknown_fields)]
-    struct Field {
-        name: String,
-        doc: String,
-        ty: Ty,
-        required: bool,
-        example: Option<String>,
-        default: Option<String>,
-    }
-    #[derive(Clone, Copy, Deserialize, Default, PartialEq)]
-    enum Ty {
-        #[default]
-        Str,
-        Int,
-        Bool,
-        StrList,
-        Ron,
-        Path,
-    }
-
-    fn manifest() -> Manifest {
+    fn manifest() -> TapManifest {
         let text = std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/kyyn-tap.ron"))
             .expect("kyyn-tap.ron");
-        ron::from_str(&text).expect("manifest parses")
+        TapManifest::parse(&text).expect("published SDK accepts the manifest")
     }
 
     /// THE drift guard: every plugin's declared config spec, filled with its
@@ -111,8 +62,8 @@ mod manifest_drift {
                     continue;
                 };
                 let rendered = match f.ty {
-                    Ty::Int | Ty::Bool | Ty::Ron => value.clone(),
-                    Ty::StrList => format!(
+                    TapConfigType::Int | TapConfigType::Bool | TapConfigType::Ron => value.clone(),
+                    TapConfigType::StrList => format!(
                         "[{}]",
                         value
                             .split(',')
@@ -121,7 +72,7 @@ mod manifest_drift {
                             .join(", ")
                     ),
                     // Str and Path both RON-quote the raw value.
-                    Ty::Str | Ty::Path => format!("{value:?}"),
+                    TapConfigType::Str | TapConfigType::Path => format!("{value:?}"),
                 };
                 parts.push(format!("{}: {rendered}", f.name));
             }
@@ -141,12 +92,19 @@ mod manifest_drift {
     #[test]
     fn committed_component_digests_match_the_manifest() {
         for plugin in manifest().plugins {
-            let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join(&plugin.component);
+            let component = plugin
+                .component
+                .as_deref()
+                .expect("first-party plugin is component-backed");
+            let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join(component);
             let bytes = std::fs::read(&path)
                 .unwrap_or_else(|error| panic!("reading {}: {error}", path.display()));
             assert_eq!(
                 format!("{:x}", sha2::Sha256::digest(bytes)),
-                plugin.component_sha256,
+                plugin
+                    .component_sha256
+                    .as_deref()
+                    .expect("component digest is present"),
                 "{} has a stale component_sha256 pin",
                 plugin.name
             );
@@ -180,11 +138,19 @@ mod manifest_drift {
             if plugin.capabilities.repo {
                 allowed.insert("repo");
             }
-            if plugin.config.iter().any(|field| field.ty == Ty::Path) {
+            if plugin
+                .config
+                .iter()
+                .any(|field| field.ty == TapConfigType::Path)
+            {
                 allowed.insert("local");
             }
 
-            let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join(&plugin.component);
+            let component = plugin
+                .component
+                .as_deref()
+                .expect("first-party plugin is component-backed");
+            let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join(component);
             let bytes = std::fs::read(&path)
                 .unwrap_or_else(|error| panic!("reading {}: {error}", path.display()));
             let mut level = 0usize;
