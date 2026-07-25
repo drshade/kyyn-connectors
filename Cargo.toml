@@ -25,11 +25,14 @@ serde = { version = "1", features = ["derive"] }
 resolver = "2"
 members = [
     "component-guests/graph-calendar",
+    "component-guests/graph-chats",
     "component-guests/graph-mail",
+    "component-guests/graph-meetings",
     "component-guests/git-repo",
     "component-guests/kb",
     "component-guests/pack",
     "component-guests/salesforce",
+    "component-guests/sharepoint-file",
     "component-guests/sweep",
     "crates/kyyn-plugin-git",
     "crates/kyyn-plugin-graph",

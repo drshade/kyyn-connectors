@@ -36,6 +36,14 @@ mod guest {
         owner_addresses: Vec<String>,
         #[serde(default, deserialize_with = "opt_string_lenient")]
         mail_filter: Option<String>,
+        #[serde(default, deserialize_with = "opt_string_lenient")]
+        url: Option<String>,
+        #[serde(default = "default_patterns")]
+        patterns: Vec<String>,
+        #[serde(default = "default_kind")]
+        kind: String,
+        #[serde(default = "default_max_file_bytes")]
+        max_file_bytes: u64,
     }
 
     fn default_client_id() -> String {
@@ -71,6 +79,10 @@ mod guest {
                 tenant: default_tenant(),
                 owner_addresses: Vec::new(),
                 mail_filter: None,
+                url: None,
+                patterns: default_patterns(),
+                kind: default_kind(),
+                max_file_bytes: default_max_file_bytes(),
             });
         }
         value.into_rust().map_err(|error| {
@@ -79,6 +91,18 @@ mod guest {
                  mail_filter is mail-only): {error}"
             )
         })
+    }
+
+    fn default_patterns() -> Vec<String> {
+        vec!["**/*".into()]
+    }
+
+    fn default_kind() -> String {
+        "file".into()
+    }
+
+    fn default_max_file_bytes() -> u64 {
+        64 * 1024 * 1024
     }
 
     fn validate(config: &Config) -> Result<(), String> {
@@ -96,6 +120,33 @@ mod guest {
         if super::PLUGIN_KIND != "mail" && config.mail_filter.is_some() {
             return Err(format!(
                 "mail_filter applies to graph-mail, not {}",
+                super::PLUGIN_NAME
+            ));
+        }
+        if super::PLUGIN_KIND == "sharepoint" {
+            let url = config.url.as_deref().ok_or("sharepoint url is required")?;
+            if !url.starts_with("https://") {
+                return Err("sharepoint url must be an https:// URL".into());
+            }
+            for pattern in &config.patterns {
+                glob::Pattern::new(pattern)
+                    .map_err(|error| format!("pattern '{pattern}': {error}"))?;
+            }
+            if config.kind.is_empty()
+                || !config
+                    .kind
+                    .chars()
+                    .all(|ch| ch.is_ascii_alphanumeric() || ch == '-')
+            {
+                return Err(format!("kind '{}' must be a bare token", config.kind));
+            }
+        } else if config.url.is_some()
+            || config.patterns != default_patterns()
+            || config.kind != default_kind()
+            || config.max_file_bytes != default_max_file_bytes()
+        {
+            return Err(format!(
+                "url, patterns, kind and max_file_bytes apply to sharepoint-file, not {}",
                 super::PLUGIN_NAME
             ));
         }
@@ -188,7 +239,11 @@ mod guest {
         Ok(())
     }
 
-    fn graph_get(config: &Config, url: &str, refreshed: &mut bool) -> Result<Response, String> {
+    fn graph_response(
+        config: &Config,
+        url: &str,
+        refreshed: &mut bool,
+    ) -> Result<Response, String> {
         for attempt in 1..=5u64 {
             let response = http::fetch(&request(Method::Get, url.into(), None, Some(ACCESS_TOKEN)))
                 .map_err(|error| error.message)?;
@@ -220,15 +275,20 @@ mod guest {
                 control::sleep_ms(delay * 1_000);
                 continue;
             }
-            if !(200..300).contains(&response.status) {
-                return Err(format!(
-                    "Graph GET failed (HTTP {}) for {url}",
-                    response.status
-                ));
-            }
             return Ok(response);
         }
         Err(format!("Graph GET exhausted retries for {url}"))
+    }
+
+    fn graph_get(config: &Config, url: &str, refreshed: &mut bool) -> Result<Response, String> {
+        let response = graph_response(config, url, refreshed)?;
+        if !(200..300).contains(&response.status) {
+            return Err(format!(
+                "Graph GET failed (HTTP {}) for {url}",
+                response.status
+            ));
+        }
+        Ok(response)
     }
 
     fn graph_pages(config: &Config, first_url: String) -> Result<Vec<serde_json::Value>, String> {
@@ -306,7 +366,6 @@ mod guest {
         attendees: Vec<Attendee>,
         is_online_meeting: Option<bool>,
         location: Option<Location>,
-        #[allow(dead_code)]
         online_meeting: Option<OnlineMeetingInfo>,
     }
 
@@ -688,14 +747,819 @@ mod guest {
         })
     }
 
+    #[derive(Deserialize)]
+    #[serde(rename_all = "camelCase")]
+    struct ChatUser {
+        display_name: Option<String>,
+    }
+
+    #[derive(Deserialize)]
+    struct ChatMessageFrom {
+        user: Option<ChatUser>,
+    }
+
+    #[derive(Deserialize)]
+    #[serde(rename_all = "camelCase")]
+    struct GraphChatMessage {
+        id: String,
+        message_type: Option<String>,
+        created_date_time: String,
+        from: Option<ChatMessageFrom>,
+        body: Option<MessageBody>,
+    }
+
+    #[derive(Deserialize)]
+    #[serde(rename_all = "camelCase")]
+    struct ChatMember {
+        display_name: Option<String>,
+        email: Option<String>,
+    }
+
+    #[derive(Deserialize)]
+    #[serde(rename_all = "camelCase")]
+    struct GraphChat {
+        id: String,
+        topic: Option<String>,
+        chat_type: Option<String>,
+        #[serde(default)]
+        members: Vec<ChatMember>,
+    }
+
+    #[derive(Serialize)]
+    #[serde(rename_all = "camelCase")]
+    struct ChatMessage {
+        id: String,
+        created_date_time: String,
+        from: Option<String>,
+        body: Option<String>,
+    }
+
+    #[derive(Serialize)]
+    #[serde(rename_all = "camelCase")]
+    struct Chat {
+        id: String,
+        topic: Option<String>,
+        chat_type: Option<String>,
+        members: Vec<EmailAddress>,
+        messages: Vec<ChatMessage>,
+    }
+
+    fn chats_url(start: &str) -> String {
+        format!(
+            "https://graph.microsoft.com/v1.0/me/chats\
+             ?$filter=lastUpdatedDateTime%20ge%20{}&$expand=members&$top=50",
+            percent_encode(start)
+        )
+    }
+
+    fn chat_messages_url(chat_id: &str) -> String {
+        format!(
+            "https://graph.microsoft.com/v1.0/chats/{chat_id}/messages\
+             ?$top=50&$orderby=createdDateTime%20desc"
+        )
+    }
+
+    fn chat_messages(
+        config: &Config,
+        chat_id: &str,
+        start: &str,
+        until: &str,
+    ) -> Result<Vec<ChatMessage>, String> {
+        let mut next = Some(chat_messages_url(chat_id));
+        let mut refreshed = false;
+        let mut pages = 0u32;
+        let mut messages = Vec::new();
+        while let Some(url) = next.take() {
+            let response = graph_response(config, &url, &mut refreshed)?;
+            match response.status {
+                403 | 404 if pages == 0 => return Ok(Vec::new()),
+                403 | 404 => {
+                    return Err(format!(
+                        "chat collection disappeared mid-pagination for {url}"
+                    ));
+                }
+                200..=299 => {}
+                status => {
+                    return Err(format!("Graph GET failed (HTTP {status}) for {url}"));
+                }
+            }
+            let body = json(&response)?;
+            let values = body["value"]
+                .as_array()
+                .ok_or_else(|| "Graph chat page has no value array".to_string())?;
+            let page = values
+                .iter()
+                .cloned()
+                .map(serde_json::from_value::<GraphChatMessage>)
+                .collect::<Result<Vec<_>, _>>()
+                .map_err(|error| format!("chat message shape: {error}"))?;
+            let reached_start = page
+                .iter()
+                .any(|message| message.created_date_time.as_str() < start);
+            messages.extend(
+                page.into_iter()
+                    .filter(|message| {
+                        matches!(message.message_type.as_deref(), Some("message") | None)
+                            && message.created_date_time.as_str() >= start
+                            && message.created_date_time.as_str() < until
+                    })
+                    .map(|message| ChatMessage {
+                        id: message.id,
+                        created_date_time: message.created_date_time,
+                        from: message
+                            .from
+                            .and_then(|from| from.user)
+                            .and_then(|user| user.display_name),
+                        body: message.body.map(|body| body.content),
+                    }),
+            );
+            next = (!reached_start)
+                .then(|| body["@odata.nextLink"].as_str().map(str::to_string))
+                .flatten();
+            pages += 1;
+            if pages >= MAX_PAGES {
+                return Err("Graph chat paging exceeded 500 pages — aborting".into());
+            }
+        }
+        messages.sort_by(|left, right| {
+            left.created_date_time
+                .cmp(&right.created_date_time)
+                .then_with(|| left.id.cmp(&right.id))
+        });
+        messages.dedup_by(|left, right| left.id == right.id);
+        Ok(messages)
+    }
+
+    fn fetch_chats(config: &Config, start: &str, until: &str) -> Result<FetchResult, String> {
+        let raw = graph_pages(config, chats_url(start))?;
+        let mut graph_chats = raw
+            .into_iter()
+            .map(serde_json::from_value::<GraphChat>)
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(|error| format!("chat shape: {error}"))?;
+        graph_chats.sort_by(|left, right| left.id.cmp(&right.id));
+        graph_chats.dedup_by(|left, right| left.id == right.id);
+        control::progress(&format!(
+            "{} chats active in window; fetching messages…",
+            graph_chats.len()
+        ));
+        let mut chats = Vec::new();
+        for chat in graph_chats {
+            let messages = chat_messages(config, &chat.id, start, until)?;
+            if !messages.is_empty() {
+                chats.push(Chat {
+                    id: chat.id,
+                    topic: chat.topic,
+                    chat_type: chat.chat_type,
+                    members: chat
+                        .members
+                        .into_iter()
+                        .map(|member| EmailAddress {
+                            name: member.display_name,
+                            address: member.email,
+                        })
+                        .collect(),
+                    messages,
+                });
+            }
+        }
+        let bundle = serde_json::to_vec_pretty(&chats).map_err(|error| error.to_string())?;
+        let file = evidence::open("chats.json")?;
+        file.write(&bundle)?;
+        let _stored = file.finish()?;
+        let mut items = Vec::new();
+        for chat in &chats {
+            for message in &chat.messages {
+                let canonical =
+                    serde_json::to_vec(message).map_err(|error| error.to_string())?;
+                items.push(Item {
+                    id: message.id.clone(),
+                    kind: "chat-message".into(),
+                    version: None,
+                    content_hash: format!("{:x}", sha2::Sha256::digest(&canonical)),
+                    files: vec!["chats.json".into()],
+                    file_hashes: Vec::new(),
+                    locator: Some(message.id.clone()),
+                    meta: chat.topic.clone().unwrap_or_else(|| "chat".into()),
+                });
+            }
+        }
+        Ok(FetchResult {
+            notes: format!("{} chat messages in window", items.len()),
+            items,
+            next_checkpoint: None,
+        })
+    }
+
+    fn graph_item_pages(
+        config: &Config,
+        first_url: String,
+    ) -> Result<Option<Vec<serde_json::Value>>, String> {
+        let mut records = Vec::new();
+        let mut next = Some(first_url);
+        let mut refreshed = false;
+        let mut pages = 0u32;
+        while let Some(url) = next.take() {
+            let response = graph_response(config, &url, &mut refreshed)?;
+            match response.status {
+                403 | 404 if pages == 0 => return Ok(None),
+                403 | 404 => {
+                    return Err(format!(
+                        "Graph collection disappeared mid-pagination for {url}"
+                    ));
+                }
+                200..=299 => {}
+                status => return Err(format!("Graph GET failed (HTTP {status}) for {url}")),
+            }
+            let body = json(&response)?;
+            records.extend(
+                body["value"]
+                    .as_array()
+                    .ok_or_else(|| "Graph collection has no value array".to_string())?
+                    .iter()
+                    .cloned(),
+            );
+            next = body["@odata.nextLink"].as_str().map(str::to_string);
+            pages += 1;
+            if pages >= MAX_PAGES {
+                return Err("Graph item paging exceeded 500 pages — aborting".into());
+            }
+        }
+        Ok(Some(records))
+    }
+
+    #[derive(Deserialize)]
+    struct OnlineMeeting {
+        id: String,
+    }
+
+    #[derive(Deserialize)]
+    #[serde(rename_all = "camelCase")]
+    struct Transcript {
+        id: String,
+        created_date_time: Option<String>,
+    }
+
+    #[derive(Deserialize)]
+    struct AttendanceReport {
+        id: String,
+        #[serde(rename = "meetingStartDateTime")]
+        meeting_start: Option<String>,
+        #[serde(rename = "meetingEndDateTime")]
+        meeting_end: Option<String>,
+        #[serde(rename = "totalParticipantCount")]
+        total_participant_count: Option<u32>,
+    }
+
+    fn graph_time(value: &str) -> Option<chrono::DateTime<chrono::Utc>> {
+        let value = if value.ends_with(['Z', 'z']) {
+            value.to_string()
+        } else {
+            format!("{value}Z")
+        };
+        chrono::DateTime::parse_from_rfc3339(&value)
+            .ok()
+            .map(|time| time.with_timezone(&chrono::Utc))
+    }
+
+    fn slugify(value: &str) -> String {
+        let mut output = String::new();
+        let mut previous_dash = false;
+        for ch in value.chars() {
+            if ch.is_alphanumeric() {
+                output.extend(ch.to_lowercase());
+                previous_dash = false;
+            } else if !previous_dash {
+                output.push('-');
+                previous_dash = true;
+            }
+        }
+        output.trim_matches('-').chars().take(60).collect()
+    }
+
+    fn meeting_file_name(event: &GraphEvent) -> String {
+        let date: String = event.start.date_time.chars().take(10).collect();
+        let subject = event
+            .subject
+            .as_deref()
+            .map(slugify)
+            .filter(|value| !value.is_empty())
+            .unwrap_or_else(|| "untitled".into());
+        let id = slugify(&event.id);
+        let count = id.chars().count();
+        let suffix: String = id.chars().skip(count.saturating_sub(8)).collect();
+        format!("{date}-{subject}-{suffix}")
+    }
+
+    fn online_meeting_lookup_url(join_url: &str) -> String {
+        format!(
+            "https://graph.microsoft.com/v1.0/me/onlineMeetings\
+             ?$filter=JoinWebUrl%20eq%20'{}'",
+            percent_encode(join_url)
+        )
+    }
+
+    fn transcript_urls(meeting_id: &str) -> (String, impl Fn(&str) -> String + '_) {
+        (
+            format!(
+                "https://graph.microsoft.com/v1.0/me/onlineMeetings/{meeting_id}/transcripts"
+            ),
+            move |transcript_id| {
+                format!(
+                    "https://graph.microsoft.com/v1.0/me/onlineMeetings/{meeting_id}/\
+                     transcripts/{transcript_id}/content?$format=text/vtt"
+                )
+            },
+        )
+    }
+
+    fn attendance_urls(meeting_id: &str) -> (String, impl Fn(&str) -> String + '_) {
+        (
+            format!(
+                "https://graph.microsoft.com/v1.0/me/onlineMeetings/{meeting_id}/attendanceReports"
+            ),
+            move |report_id| {
+                format!(
+                    "https://graph.microsoft.com/v1.0/me/onlineMeetings/{meeting_id}/\
+                     attendanceReports/{report_id}/attendanceRecords"
+                )
+            },
+        )
+    }
+
+    struct MeetingArtifacts {
+        transcript: Option<(String, String)>,
+        attendance: Option<(String, String)>,
+    }
+
+    fn fetch_meeting_artifacts(
+        config: &Config,
+        event: &GraphEvent,
+    ) -> Result<MeetingArtifacts, String> {
+        let Some(join_url) = event
+            .online_meeting
+            .as_ref()
+            .and_then(|meeting| meeting.join_url.as_deref())
+        else {
+            return Ok(MeetingArtifacts {
+                transcript: None,
+                attendance: None,
+            });
+        };
+        let meetings = graph_item_pages(config, online_meeting_lookup_url(join_url))?
+            .unwrap_or_default()
+            .into_iter()
+            .map(serde_json::from_value::<OnlineMeeting>)
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(|error| format!("online meeting shape: {error}"))?;
+        let Some(meeting) = meetings.into_iter().next() else {
+            return Ok(MeetingArtifacts {
+                transcript: None,
+                attendance: None,
+            });
+        };
+        let start = graph_time(&event.start.date_time);
+        let end = graph_time(&event.end.date_time);
+        let Some((start, end)) = start.zip(end) else {
+            return Ok(MeetingArtifacts {
+                transcript: None,
+                attendance: None,
+            });
+        };
+        let base_name = meeting_file_name(event);
+        let (transcript_list_url, transcript_content_url) = transcript_urls(&meeting.id);
+        let transcripts = graph_item_pages(config, transcript_list_url)?
+            .unwrap_or_default()
+            .into_iter()
+            .map(serde_json::from_value::<Transcript>)
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(|error| format!("transcript shape: {error}"))?;
+        let chosen_transcript = transcripts
+            .into_iter()
+            .filter_map(|transcript| {
+                let created = graph_time(transcript.created_date_time.as_deref()?)?;
+                (created >= start && created <= end + chrono::Duration::hours(6))
+                    .then_some((created, transcript))
+            })
+            .max_by_key(|(created, _)| *created)
+            .map(|(_, transcript)| transcript);
+        let transcript = if let Some(transcript) = chosen_transcript {
+            let mut refreshed = false;
+            let response = graph_response(
+                config,
+                &transcript_content_url(&transcript.id),
+                &mut refreshed,
+            )?;
+            match response.status {
+                200..=299 => {
+                    let path = format!("transcripts/{base_name}.vtt");
+                    let file = evidence::open(&path)?;
+                    file.write(&response.body)?;
+                    let stored = file.finish()?;
+                    Some((path, stored.sha256))
+                }
+                403 | 404 => None,
+                status => return Err(format!("transcript fetch failed (HTTP {status})")),
+            }
+        } else {
+            None
+        };
+
+        let (report_list_url, report_records_url) = attendance_urls(&meeting.id);
+        let reports = graph_item_pages(config, report_list_url)?
+            .unwrap_or_default()
+            .into_iter()
+            .map(serde_json::from_value::<AttendanceReport>)
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(|error| format!("attendance report shape: {error}"))?;
+        let chosen_report = reports
+            .into_iter()
+            .filter_map(|report| {
+                let report_start = graph_time(report.meeting_start.as_deref()?)?;
+                (report_start >= start - chrono::Duration::hours(1)
+                    && report_start <= end + chrono::Duration::hours(6))
+                .then_some((report_start, report))
+            })
+            .max_by_key(|(report_start, _)| *report_start)
+            .map(|(_, report)| report);
+        let attendance = if let Some(report) = chosen_report {
+            let Some(records) = graph_item_pages(config, report_records_url(&report.id))? else {
+                return Ok(MeetingArtifacts {
+                    transcript,
+                    attendance: None,
+                });
+            };
+            let envelope = serde_json::json!({
+                "reportId": report.id,
+                "meetingStartDateTime": report.meeting_start,
+                "meetingEndDateTime": report.meeting_end,
+                "totalParticipantCount": report.total_participant_count,
+                "records": records,
+            });
+            let path = format!("attendance/{base_name}.json");
+            let bytes =
+                serde_json::to_vec_pretty(&envelope).map_err(|error| error.to_string())?;
+            let file = evidence::open(&path)?;
+            file.write(&bytes)?;
+            let stored = file.finish()?;
+            Some((path, stored.sha256))
+        } else {
+            None
+        };
+        Ok(MeetingArtifacts {
+            transcript,
+            attendance,
+        })
+    }
+
+    fn fetch_meetings(config: &Config, start: &str, until: &str) -> Result<FetchResult, String> {
+        let raw = graph_pages(config, calendar_url(start, until))?;
+        let mut events = raw
+            .into_iter()
+            .map(serde_json::from_value::<GraphEvent>)
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(|error| format!("calendar event shape: {error}"))?;
+        events.sort_by(|left, right| left.start.date_time.cmp(&right.start.date_time));
+        events.dedup_by(|left, right| left.id == right.id);
+        control::progress(&format!(
+            "{} events in window; checking for transcripts and attendance…",
+            events.len()
+        ));
+        let mut meetings = Vec::new();
+        let mut hashes: Vec<Vec<(String, String)>> = Vec::new();
+        for event in events {
+            let artifacts = fetch_meeting_artifacts(config, &event)?;
+            if artifacts.transcript.is_none() && artifacts.attendance.is_none() {
+                continue;
+            }
+            let event_hashes: Vec<(String, String)> = artifacts
+                .transcript
+                .iter()
+                .chain(artifacts.attendance.iter())
+                .cloned()
+                .collect();
+            let normalized = Event {
+                id: event.id,
+                subject: event.subject,
+                start: event.start.date_time,
+                end: event.end.date_time,
+                organizer: event.organizer.map(|value| value.email_address),
+                attendees: event
+                    .attendees
+                    .into_iter()
+                    .map(|value| value.email_address)
+                    .collect(),
+                teams: event.is_online_meeting.unwrap_or(false),
+                location: event.location.and_then(|value| value.display_name),
+                transcript_file: artifacts.transcript.map(|(path, _)| path),
+                attendance_file: artifacts.attendance.map(|(path, _)| path),
+            };
+            meetings.push(normalized);
+            hashes.push(event_hashes);
+        }
+        let bundle = serde_json::to_vec_pretty(&meetings).map_err(|error| error.to_string())?;
+        let file = evidence::open("meetings.json")?;
+        file.write(&bundle)?;
+        let _stored = file.finish()?;
+        let items = meetings
+            .iter()
+            .zip(hashes)
+            .map(|(meeting, hashes)| {
+                let canonical = serde_json::to_vec(meeting).map_err(|error| error.to_string())?;
+                Ok(Item {
+                    id: meeting.id.clone(),
+                    kind: "meeting".into(),
+                    version: None,
+                    content_hash: format!("{:x}", sha2::Sha256::digest(&canonical)),
+                    files: std::iter::once("meetings.json".into())
+                        .chain(hashes.iter().map(|(path, _)| path.clone()))
+                        .collect(),
+                    file_hashes: hashes,
+                    locator: Some(meeting.id.clone()),
+                    meta: meeting.subject.clone().unwrap_or_default(),
+                })
+            })
+            .collect::<Result<Vec<_>, String>>()?;
+        Ok(FetchResult {
+            notes: format!("{} meetings with artifacts", items.len()),
+            items,
+            next_checkpoint: None,
+        })
+    }
+
+    #[derive(Deserialize)]
+    struct FolderFacet {}
+
+    #[derive(Deserialize)]
+    struct ParentReference {
+        #[serde(rename = "driveId")]
+        drive_id: Option<String>,
+    }
+
+    #[derive(Deserialize)]
+    struct DriveItem {
+        id: Option<String>,
+        name: String,
+        #[serde(rename = "@microsoft.graph.downloadUrl")]
+        download_url: Option<String>,
+        #[serde(rename = "eTag")]
+        etag: Option<String>,
+        #[serde(rename = "lastModifiedDateTime")]
+        last_modified: Option<String>,
+        size: Option<u64>,
+        folder: Option<FolderFacet>,
+        #[serde(rename = "parentReference")]
+        parent_reference: Option<ParentReference>,
+    }
+
+    fn share_token(url: &str) -> String {
+        use base64::Engine as _;
+        format!(
+            "u!{}",
+            base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(url)
+        )
+    }
+
+    fn relative_matches(patterns: &[glob::Pattern], relative: &str) -> bool {
+        let options = glob::MatchOptions {
+            require_literal_separator: true,
+            require_literal_leading_dot: true,
+            ..Default::default()
+        };
+        patterns
+            .iter()
+            .any(|pattern| pattern.matches_with(relative, options))
+    }
+
+    fn download(
+        url: &str,
+        path: &str,
+        max_bytes: u64,
+    ) -> Result<evidence::StoredFile, String> {
+        let response = http::fetch(&Request {
+            method: Method::Get,
+            url: url.into(),
+            headers: Vec::new(),
+            body: None,
+            secret_authorization: None,
+            max_response_bytes: max_bytes,
+            timeout_ms: 120_000,
+        })
+        .map_err(|error| error.message)?;
+        if !(200..300).contains(&response.status) {
+            return Err(format!("download failed (HTTP {}) for '{path}'", response.status));
+        }
+        let file = evidence::open(path)?;
+        file.write(&response.body)?;
+        file.finish()
+    }
+
+    fn fetch_sharepoint(config: &Config, checkpoint: Option<String>) -> Result<FetchResult, String> {
+        use std::collections::BTreeMap;
+        let sharing_url = config.url.as_deref().ok_or("sharepoint url is required")?;
+        if secrets::get(ACCESS_TOKEN).is_none() {
+            return Err("no token — sign the realm in first".into());
+        }
+        let metadata_url = format!(
+            "https://graph.microsoft.com/v1.0/shares/{}/driveItem",
+            share_token(sharing_url)
+        );
+        let mut refreshed = false;
+        let response = graph_response(config, &metadata_url, &mut refreshed)?;
+        match response.status {
+            403 => return Err("share link access denied (Graph 403)".into()),
+            404 => return Err("share link not found (Graph 404)".into()),
+            200..=299 => {}
+            status => return Err(format!("share lookup failed (HTTP {status})")),
+        }
+        let root: DriveItem = serde_json::from_slice(&response.body)
+            .map_err(|error| format!("drive item shape: {error}"))?;
+        if root.folder.is_none() {
+            let provider_version = root.etag.clone().or(root.last_modified.clone());
+            if provider_version.as_deref().zip(checkpoint.as_deref()).is_some_and(
+                |(version, previous)| version == previous,
+            ) {
+                return Ok(FetchResult {
+                    items: Vec::new(),
+                    notes: format!("'{}' unchanged", root.name),
+                    next_checkpoint: checkpoint,
+                });
+            }
+            if root.size.is_some_and(|size| size > config.max_file_bytes) {
+                return Ok(FetchResult {
+                    items: Vec::new(),
+                    notes: format!("skipped '{}' (over size cap)", root.name),
+                    next_checkpoint: checkpoint,
+                });
+            }
+            let url = root.download_url.as_deref().ok_or("file has no download URL")?;
+            let name = root
+                .name
+                .rsplit(['/', '\\'])
+                .next()
+                .unwrap_or("download")
+                .to_string();
+            let stored = download(url, &name, config.max_file_bytes)?;
+            if provider_version.is_none()
+                && checkpoint.as_deref() == Some(stored.sha256.as_str())
+            {
+                return Ok(FetchResult {
+                    items: Vec::new(),
+                    notes: format!("'{name}' unchanged (content hash match)"),
+                    next_checkpoint: Some(stored.sha256),
+                });
+            }
+            let next = provider_version
+                .clone()
+                .unwrap_or_else(|| stored.sha256.clone());
+            return Ok(FetchResult {
+                items: vec![Item {
+                    id: sharing_url.into(),
+                    kind: config.kind.clone(),
+                    version: provider_version,
+                    content_hash: stored.sha256,
+                    files: vec![name.clone()],
+                    file_hashes: Vec::new(),
+                    locator: None,
+                    meta: format!(
+                        "{name} · {} bytes · modified {}",
+                        stored.bytes,
+                        root.last_modified.as_deref().unwrap_or("?")
+                    ),
+                }],
+                notes: format!("'{name}' new version snapshotted"),
+                next_checkpoint: Some(next),
+            });
+        }
+
+        let drive_id = root
+            .parent_reference
+            .and_then(|reference| reference.drive_id)
+            .ok_or("folder share carries no driveId")?;
+        let root_id = root.id.ok_or("folder share carries no item id")?;
+        let patterns = config
+            .patterns
+            .iter()
+            .map(|pattern| {
+                glob::Pattern::new(pattern)
+                    .map_err(|error| format!("pattern '{pattern}': {error}"))
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        let previous: BTreeMap<String, String> = checkpoint
+            .as_deref()
+            .and_then(|value| ron::from_str(value).ok())
+            .unwrap_or_default();
+        let mut stack = vec![(root_id, String::new())];
+        let mut found = Vec::new();
+        while let Some((id, prefix)) = stack.pop() {
+            let children_url = format!(
+                "https://graph.microsoft.com/v1.0/drives/{drive_id}/items/{id}/children"
+            );
+            let children = graph_pages(config, children_url)?
+                .into_iter()
+                .map(serde_json::from_value::<DriveItem>)
+                .collect::<Result<Vec<_>, _>>()
+                .map_err(|error| format!("drive child shape: {error}"))?;
+            for child in children {
+                let relative = if prefix.is_empty() {
+                    child.name.clone()
+                } else {
+                    format!("{prefix}/{}", child.name)
+                };
+                if child.folder.is_some() {
+                    stack.push((
+                        child.id.clone().ok_or("folder child has no id")?,
+                        relative,
+                    ));
+                } else {
+                    found.push((child, relative));
+                }
+            }
+        }
+        found.sort_by(|left, right| left.1.cmp(&right.1));
+        let mut next = BTreeMap::new();
+        let mut items = Vec::new();
+        let mut unchanged = 0usize;
+        let mut notes = Vec::new();
+        for (child, relative) in found {
+            if !relative_matches(&patterns, &relative) {
+                continue;
+            }
+            let id = child.id.clone().ok_or("file child has no id")?;
+            if child.size.is_some_and(|size| size > config.max_file_bytes) {
+                notes.push(format!("skipped {relative} (over size cap)"));
+                continue;
+            }
+            if child
+                .etag
+                .as_deref()
+                .zip(previous.get(&id).map(String::as_str))
+                .is_some_and(|(version, old)| version == old)
+            {
+                next.insert(id, child.etag.unwrap());
+                unchanged += 1;
+                continue;
+            }
+            let url = child
+                .download_url
+                .as_deref()
+                .ok_or_else(|| format!("no download URL on '{relative}'"))?;
+            let stored = download(url, &relative, config.max_file_bytes)?;
+            if child.etag.is_none() && previous.get(&id) == Some(&stored.sha256) {
+                next.insert(id, stored.sha256);
+                unchanged += 1;
+                continue;
+            }
+            next.insert(
+                id.clone(),
+                child
+                    .etag
+                    .clone()
+                    .unwrap_or_else(|| stored.sha256.clone()),
+            );
+            items.push(Item {
+                id,
+                kind: config.kind.clone(),
+                version: child.etag,
+                content_hash: stored.sha256,
+                files: vec![relative.clone()],
+                file_hashes: Vec::new(),
+                locator: None,
+                meta: format!(
+                    "{relative} · {} bytes · modified {}",
+                    stored.bytes,
+                    child.last_modified.as_deref().unwrap_or("?")
+                ),
+            });
+        }
+        notes.insert(
+            0,
+            format!("{} new/changed, {unchanged} unchanged", items.len()),
+        );
+        Ok(FetchResult {
+            items,
+            notes: notes.join("; "),
+            next_checkpoint: Some(ron::to_string(&next).map_err(|error| error.to_string())?),
+        })
+    }
+
     struct GraphComponent;
 
     impl Guest for GraphComponent {
         fn describe() -> PluginDescribe {
             PluginDescribe {
                 name: super::PLUGIN_NAME.into(),
-                link_namespace: "graph".into(),
-                fetch_style: FetchStyle::Windowed,
+                link_namespace: if super::PLUGIN_KIND == "sharepoint" {
+                    "sharepoint"
+                } else {
+                    "graph"
+                }
+                .into(),
+                fetch_style: if super::PLUGIN_KIND == "sharepoint" {
+                    FetchStyle::Snapshot
+                } else {
+                    FetchStyle::Windowed
+                },
                 auth_realm: Some("ms-graph".into()),
             }
         }
@@ -785,12 +1649,20 @@ mod guest {
         fn fetch(request: FetchRequest) -> Result<FetchResult, String> {
             let config = parse_config(&request.config)?;
             validate(&config)?;
+            if super::PLUGIN_KIND == "sharepoint" {
+                if !matches!(request.spec, RunSpec::Snapshot) {
+                    return Err("sharepoint-file is a snapshot source".into());
+                }
+                return fetch_sharepoint(&config, request.checkpoint);
+            }
             let RunSpec::Window(window) = request.spec else {
                 return Err(format!("{} is a windowed source", super::PLUGIN_NAME));
             };
             match super::PLUGIN_KIND {
                 "calendar" => fetch_calendar(&config, &window.start, &window.until),
                 "mail" => fetch_mail(&config, &window.start, &window.until),
+                "chats" => fetch_chats(&config, &window.start, &window.until),
+                "meetings" => fetch_meetings(&config, &window.start, &window.until),
                 kind => Err(format!("unsupported Graph component kind {kind}")),
             }
         }

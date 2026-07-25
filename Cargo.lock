@@ -732,6 +732,23 @@ dependencies = [
 name = "kyyn-component-graph-calendar"
 version = "0.1.0"
 dependencies = [
+ "base64",
+ "chrono",
+ "glob",
+ "ron",
+ "serde",
+ "serde_json",
+ "sha2",
+ "wit-bindgen",
+]
+
+[[package]]
+name = "kyyn-component-graph-chats"
+version = "0.1.0"
+dependencies = [
+ "base64",
+ "chrono",
+ "glob",
  "ron",
  "serde",
  "serde_json",
@@ -743,6 +760,23 @@ dependencies = [
 name = "kyyn-component-graph-mail"
 version = "0.1.0"
 dependencies = [
+ "base64",
+ "chrono",
+ "glob",
+ "ron",
+ "serde",
+ "serde_json",
+ "sha2",
+ "wit-bindgen",
+]
+
+[[package]]
+name = "kyyn-component-graph-meetings"
+version = "0.1.0"
+dependencies = [
+ "base64",
+ "chrono",
+ "glob",
  "ron",
  "serde",
  "serde_json",
@@ -774,6 +808,20 @@ dependencies = [
 name = "kyyn-component-salesforce"
 version = "0.1.0"
 dependencies = [
+ "ron",
+ "serde",
+ "serde_json",
+ "sha2",
+ "wit-bindgen",
+]
+
+[[package]]
+name = "kyyn-component-sharepoint-file"
+version = "0.1.0"
+dependencies = [
+ "base64",
+ "chrono",
+ "glob",
  "ron",
  "serde",
  "serde_json",

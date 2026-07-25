@@ -22,7 +22,7 @@ remap="--remap-path-prefix=${repo_root}=/workspace \
 --remap-path-prefix=${rust_sysroot}=/rust \
 -C metadata=kyyn-first-party-tap-v1"
 
-guests="sweep git-repo kb pack salesforce graph-calendar graph-mail"
+guests="sweep git-repo kb pack salesforce graph-calendar graph-mail graph-chats graph-meetings sharepoint-file"
 packages=""
 for guest in $guests; do
   packages="$packages -p kyyn-component-$guest"

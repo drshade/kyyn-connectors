@@ -66,7 +66,7 @@
          namespace: "graph",
          capabilities: (network: ["graph.microsoft.com", "login.microsoftonline.com"], auth: Some("ms-graph")),
          component: "components/graph-mail.wasm",
-         component_sha256: "0dee1e742011a001a4eff9e6782c0c9295f2cf1b1e14dfb01344e4acc540e4d1",
+         component_sha256: "151d9482efe0d0c68606357de04fa0aa093fdd68dd5a3703199b5428b6291501",
          config: [
             (name: "mail_filter", doc: "OData $filter fragment ANDed onto the mail window — e.g. from/emailAddress/address eq 'x@y.com'.", example: Some("contains(subject, 'Sales Update')")),
             (name: "owner_addresses", doc: "Your own addresses (lowercased) — classifies sent vs received.", ty: StrList, example: Some("you@company.com")),
@@ -77,7 +77,7 @@
          namespace: "graph",
          capabilities: (network: ["graph.microsoft.com", "login.microsoftonline.com"], auth: Some("ms-graph")),
          component: "components/graph-calendar.wasm",
-         component_sha256: "d2f8c046579cb37f9d8e522c60f70bfe76cacd1f68f3a9602d51c857e18c713b",
+         component_sha256: "beb7b003651984e4ec6db437730f301c5a9c8cf95e7f9060fbccef8c971ed7bf",
          config: [
             (name: "owner_addresses", doc: "Your own addresses (lowercased).", ty: StrList, example: Some("you@company.com")),
             (name: "client_id", doc: "Azure app id — leave empty for the shared multi-tenant kyyn app.", default: Some("53ddb21b-849f-45a3-8168-8a0e555f386f")),
@@ -86,6 +86,8 @@
         (name: "graph-meetings", summary: "Teams meetings that carry transcripts or attendance reports.",
          namespace: "graph",
          capabilities: (network: ["graph.microsoft.com", "login.microsoftonline.com"], auth: Some("ms-graph")),
+         component: "components/graph-meetings.wasm",
+         component_sha256: "6020dc11c141d8e3561ff7a8d175517027d593f167064a15a6101234c9e03504",
          config: [
             (name: "owner_addresses", doc: "Your own addresses (lowercased).", ty: StrList, example: Some("you@company.com")),
             (name: "client_id", doc: "Azure app id — leave empty for the shared multi-tenant kyyn app.", default: Some("53ddb21b-849f-45a3-8168-8a0e555f386f")),
@@ -94,6 +96,8 @@
         (name: "graph-chats", summary: "Teams chats and their messages (the slow crawl).",
          namespace: "graph",
          capabilities: (network: ["graph.microsoft.com", "login.microsoftonline.com"], auth: Some("ms-graph")),
+         component: "components/graph-chats.wasm",
+         component_sha256: "ba4dc0232f0fd31357e3b664ae3a316b1e4b5eee7f173fec6003a1bdcfb361f0",
          config: [
             (name: "owner_addresses", doc: "Your own addresses (lowercased).", ty: StrList, example: Some("you@company.com")),
             (name: "client_id", doc: "Azure app id — leave empty for the shared multi-tenant kyyn app.", default: Some("53ddb21b-849f-45a3-8168-8a0e555f386f")),
@@ -101,7 +105,9 @@
          ]),
         (name: "sharepoint-file", summary: "A tracked SharePoint/OneDrive file or folder, snapshot-fetched.",
          namespace: "sharepoint",
-         capabilities: (network: ["graph.microsoft.com", "login.microsoftonline.com", "*.sharepoint.com"], auth: Some("ms-graph")),
+         capabilities: (network: ["graph.microsoft.com", "login.microsoftonline.com", "config:url", "*.sharepoint.com"], auth: Some("ms-graph")),
+         component: "components/sharepoint-file.wasm",
+         component_sha256: "c2b7ce8768d9d87d1842705a1e31b997c8e163f08b968c8a0b5499cbc2c5faf0",
          config: [
             (name: "url", doc: "The sharing link of the tracked file or folder.", required: true, example: Some("https://acme.sharepoint.com/:f:/r/sites/…")),
             (name: "patterns", doc: "Folder targets: globs over folder-relative paths.", ty: StrList, example: Some("**/*.xlsx"), default: Some("**/*")),
