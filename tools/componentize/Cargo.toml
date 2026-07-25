@@ -1,0 +1,9 @@
+[package]
+name = "kyyn-plugin-componentize"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+[dependencies]
+anyhow = "1"
+wit-component = "=0.251.0"

@@ -22,4 +22,23 @@ ron = "0.12"
 serde = { version = "1", features = ["derive"] }
 
 [workspace]
-members = ["crates/kyyn-plugin-git", "crates/kyyn-plugin-graph", "crates/kyyn-plugin-kb", "crates/kyyn-plugin-pack", "crates/kyyn-plugin-salesforce", "crates/kyyn-plugin-sweep"]
+resolver = "2"
+members = [
+    "component-guests/git-repo",
+    "component-guests/kb",
+    "component-guests/pack",
+    "component-guests/salesforce",
+    "component-guests/sweep",
+    "crates/kyyn-plugin-git",
+    "crates/kyyn-plugin-graph",
+    "crates/kyyn-plugin-kb",
+    "crates/kyyn-plugin-pack",
+    "crates/kyyn-plugin-salesforce",
+    "crates/kyyn-plugin-sweep",
+    "tools/componentize",
+]
+
+[profile.release]
+panic = "abort"
+lto = true
+codegen-units = 1

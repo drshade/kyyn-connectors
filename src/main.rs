@@ -30,8 +30,8 @@ mod manifest_drift {
     use serde::Deserialize;
 
     // A tolerant local mirror of the manifest shapes (the published
-    // kyyn-core this crate builds against may lag the config-spec
-    // fields; the ENGINE parses strictly).
+    // kyyn-core this crate builds against may lag the config-spec and
+    // component fields; the ENGINE parses strictly).
     #[derive(Deserialize)]
     struct Manifest {
         #[allow(dead_code)]
@@ -56,9 +56,6 @@ mod manifest_drift {
         example: Option<String>,
         default: Option<String>,
     }
-    // Mirrors kyyn_core::tap::TapConfigType (bare enum variant, not a
-    // string) so the manifest parses the way the engine parses it. Path is
-    // a host-read capability declaration; it quotes like Str.
     #[derive(Deserialize, Default, PartialEq)]
     enum Ty {
         #[default]

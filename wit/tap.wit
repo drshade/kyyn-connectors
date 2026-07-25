@@ -1,0 +1,198 @@
+package kyyn:tap@1.0.0;
+
+interface control {
+    progress: func(message: string);
+    now-ms: func() -> u64;
+    sleep-ms: func(duration-ms: u64);
+}
+
+interface http {
+    enum method {
+        get,
+        post,
+    }
+
+    record request {
+        method: method,
+        url: string,
+        headers: list<tuple<string, string>>,
+        body: option<list<u8>>,
+        secret-authorization: option<string>,
+        max-response-bytes: u64,
+        timeout-ms: u64,
+    }
+
+    record response {
+        status: u16,
+        headers: list<tuple<string, string>>,
+        body: list<u8>,
+    }
+
+    enum error-kind {
+        denied-host,
+        timeout,
+        too-large,
+        transport,
+        invalid,
+    }
+
+    record http-error {
+        kind: error-kind,
+        message: string,
+    }
+
+    fetch: func(request: request) -> result<response, http-error>;
+
+    record stored-file {
+        sha256: string,
+        bytes: u64,
+    }
+
+    fetch-to-evidence: func(request: request, path: string) -> result<tuple<u16, stored-file>, http-error>;
+}
+
+interface secrets {
+    get: func(name: string) -> option<list<u8>>;
+    put: func(name: string, value: list<u8>) -> result<_, string>;
+    delete: func(name: string);
+}
+
+interface repo {
+    resolve: func(url: string, reference: string) -> result<string, string>;
+
+    record entry {
+        path: string,
+        bytes: u64,
+    }
+
+    resource tree {
+        head: func() -> string;
+        entries: func() -> list<entry>;
+        read: func(path: string, max-bytes: u64) -> result<list<u8>, string>;
+        copy-to-evidence: func(path: string, dest: string, max-bytes: u64) -> result<stored-file, string>;
+    }
+
+    record stored-file {
+        sha256: string,
+        bytes: u64,
+    }
+
+    open: func(url: string, reference: string) -> result<tree, string>;
+}
+
+interface local {
+    record entry {
+        path: string,
+        bytes: u64,
+        modified-ms: u64,
+    }
+
+    record stored-file {
+        sha256: string,
+        bytes: u64,
+    }
+
+    entries: func(root: string) -> result<list<entry>, string>;
+    read: func(root: string, path: string, max-bytes: u64) -> result<list<u8>, string>;
+    copy-to-evidence: func(root: string, path: string, dest: string, max-bytes: u64) -> result<stored-file, string>;
+}
+
+interface evidence {
+    record stored-file {
+        sha256: string,
+        bytes: u64,
+    }
+
+    resource file {
+        write: func(chunk: list<u8>) -> result<_, string>;
+        finish: func() -> result<stored-file, string>;
+    }
+
+    open: func(path: string) -> result<file, string>;
+}
+
+interface api {
+    enum fetch-style {
+        windowed,
+        snapshot,
+        sweep,
+    }
+
+    record plugin-describe {
+        name: string,
+        link-namespace: string,
+        fetch-style: fetch-style,
+        auth-realm: option<string>,
+    }
+
+    record window {
+        start: string,
+        until: string,
+    }
+
+    variant run-spec {
+        window(window),
+        snapshot,
+        sweep,
+    }
+
+    record fetch-request {
+        config: string,
+        spec: run-spec,
+        checkpoint: option<string>,
+    }
+
+    record item {
+        id: string,
+        kind: string,
+        version: option<string>,
+        content-hash: string,
+        files: list<string>,
+        file-hashes: list<tuple<string, string>>,
+        locator: option<string>,
+        meta: string,
+    }
+
+    record fetch-result {
+        items: list<item>,
+        notes: string,
+        next-checkpoint: option<string>,
+    }
+
+    record auth-challenge {
+        verification-url: string,
+        user-code: string,
+        expires-in-secs: u64,
+        handle: string,
+    }
+
+    variant auth-poll-result {
+        pending,
+        done(string),
+        failed(string),
+    }
+
+    variant auth-status {
+        not-required,
+        authenticated(string),
+        not-authenticated(string),
+    }
+
+    describe: func() -> plugin-describe;
+    validate-config: func(config: string) -> result<_, string>;
+    config-auth-realm: func(config: string) -> result<option<string>, string>;
+    status: func(config: string) -> result<auth-status, string>;
+    auth-begin: func(config: string) -> result<auth-challenge, string>;
+    auth-poll: func(config: string, handle: string) -> result<auth-poll-result, string>;
+    fetch: func(request: fetch-request) -> result<fetch-result, string>;
+}
+
+world tap {
+    import control;
+    import http;
+    import secrets;
+    import repo;
+    import local;
+    import evidence;
+    export api;
+}
