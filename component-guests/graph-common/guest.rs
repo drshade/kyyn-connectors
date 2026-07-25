@@ -1231,10 +1231,10 @@ mod guest {
         let mut meetings = Vec::new();
         let mut hashes: Vec<Vec<(String, String)>> = Vec::new();
         for event in events {
-            let artifacts = fetch_meeting_artifacts(config, &event)?;
-            if artifacts.transcript.is_none() && artifacts.attendance.is_none() {
+            if event.attendees.is_empty() && !event.is_online_meeting.unwrap_or(false) {
                 continue;
             }
+            let artifacts = fetch_meeting_artifacts(config, &event)?;
             let event_hashes: Vec<(String, String)> = artifacts
                 .transcript
                 .iter()
@@ -1284,7 +1284,7 @@ mod guest {
             })
             .collect::<Result<Vec<_>, String>>()?;
         Ok(FetchResult {
-            notes: format!("{} meetings with artifacts", items.len()),
+            notes: format!("{} meetings (artifacts where organizer)", items.len()),
             items,
             next_checkpoint: None,
         })

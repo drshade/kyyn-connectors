@@ -6,4 +6,6 @@ publish = false
 
 [dependencies]
 anyhow = "1"
+wasm-encoder = { version = "=0.251.0", features = ["wasmparser"] }
+wasmparser = "=0.251.0"
 wit-component = "=0.251.0"
