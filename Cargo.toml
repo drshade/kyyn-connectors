@@ -24,6 +24,8 @@ serde = { version = "1", features = ["derive"] }
 [workspace]
 resolver = "2"
 members = [
+    "component-guests/graph-calendar",
+    "component-guests/graph-mail",
     "component-guests/git-repo",
     "component-guests/kb",
     "component-guests/pack",

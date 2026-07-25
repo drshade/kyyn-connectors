@@ -65,6 +65,8 @@
         (name: "graph-mail", summary: "Microsoft 365 mail (with attachments); narrow with mail_filter.",
          namespace: "graph",
          capabilities: (network: ["graph.microsoft.com", "login.microsoftonline.com"], auth: Some("ms-graph")),
+         component: "components/graph-mail.wasm",
+         component_sha256: "0dee1e742011a001a4eff9e6782c0c9295f2cf1b1e14dfb01344e4acc540e4d1",
          config: [
             (name: "mail_filter", doc: "OData $filter fragment ANDed onto the mail window — e.g. from/emailAddress/address eq 'x@y.com'.", example: Some("contains(subject, 'Sales Update')")),
             (name: "owner_addresses", doc: "Your own addresses (lowercased) — classifies sent vs received.", ty: StrList, example: Some("you@company.com")),
@@ -74,6 +76,8 @@
         (name: "graph-calendar", summary: "Microsoft 365 calendar events.",
          namespace: "graph",
          capabilities: (network: ["graph.microsoft.com", "login.microsoftonline.com"], auth: Some("ms-graph")),
+         component: "components/graph-calendar.wasm",
+         component_sha256: "d2f8c046579cb37f9d8e522c60f70bfe76cacd1f68f3a9602d51c857e18c713b",
          config: [
             (name: "owner_addresses", doc: "Your own addresses (lowercased).", ty: StrList, example: Some("you@company.com")),
             (name: "client_id", doc: "Azure app id — leave empty for the shared multi-tenant kyyn app.", default: Some("53ddb21b-849f-45a3-8168-8a0e555f386f")),
