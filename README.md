@@ -4,9 +4,9 @@ The first-party [kyyn](https://github.com/drshade/kyyn) tap: the
 `sweep`, `kb`, and Microsoft Graph family plugins.
 
 A tap is a plugin repository a KB pins at an immutable commit in its
-`sources.ron`; kyyn clones and builds it on first use. This repo is
-what a fresh `kyyn init` pins — and the reference example for writing
-your own tap.
+`sources.ron`; Kyyn fetches that exact tree and verifies each declared
+component before execution. This repo is what a fresh `kyyn init` pins —
+and the reference example for writing your own tap.
 
 Every advertised plugin is served by a committed, digest-pinned
 `kyyn:tap@1` WebAssembly component. The repository keeps four boundaries
@@ -20,8 +20,9 @@ explicit:
   paging, normalization, and evidence construction, with tiny per-plugin
   entry crates selecting each fetch mode.
 - `components/` contains only the executable artifacts consumers pin.
-- `crates/` retains the native implementations during the compatibility
-  window; it is not an execution bypass for component-declared plugins.
+- `crates/` contains reusable provider-domain logic and native unit-test
+  seams consumed by the component guest adapters; the repository has no
+  native tap executable.
 
 `scripts/check-components.sh` reproducibly rebuilds every guest and compares
 its bytes with the committed artifact. Use `--update` only for a deliberate,

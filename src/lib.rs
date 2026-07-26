@@ -1,10 +1,9 @@
-//! The first-party tap binary — every kyyn-plugin-* crate served over
-//! the tap harness (`kyyn-plugins --plugin <name>`, one RON request on
-//! stdin, one RON response on stdout). This is the same machinery any
-//! third-party tap uses: first-party plugins are not special (ADR 0005).
+//! Repository-level contract gates for the first-party component tap.
 
+#[cfg(test)]
 use kyyn_core::plugin::SourcePlugin;
 
+#[cfg(test)]
 fn plugin_table(name: &str) -> Option<Box<dyn SourcePlugin>> {
     match name {
         "sweep" => Some(Box::new(kyyn_plugin_sweep::SweepPlugin)),
@@ -19,10 +18,6 @@ fn plugin_table(name: &str) -> Option<Box<dyn SourcePlugin>> {
         "sharepoint-file" => Some(Box::new(kyyn_plugin_graph::SharepointFilePlugin)),
         _ => None,
     }
-}
-
-fn main() {
-    kyyn_core::plugin::tap_main(plugin_table);
 }
 
 #[cfg(test)]
