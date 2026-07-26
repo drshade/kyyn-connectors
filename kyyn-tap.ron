@@ -1,11 +1,9 @@
-// The first-party kyyn tap — advertised plugins and the binary serving
-// them (`kyyn-plugins --plugin <name>`, one RON request per invocation).
+// The first-party kyyn tap — digest-pinned kyyn:tap@1 components.
 // Each plugin's `config` block drives the web install form; a drift test in
 // src/main.rs proves every example assembles into a config the plugin
 // actually accepts.
 (
     tap: 1,
-    binary: "kyyn-plugins",
     plugins: [
         (name: "sweep", summary: "Glob a local directory tree into hashed, versioned evidence.",
          namespace: "file",
