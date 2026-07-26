@@ -87,19 +87,12 @@ mod manifest_drift {
     #[test]
     fn committed_component_digests_match_the_manifest() {
         for plugin in manifest().plugins {
-            let component = plugin
-                .component
-                .as_deref()
-                .expect("first-party plugin is component-backed");
-            let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join(component);
+            let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join(&plugin.component);
             let bytes = std::fs::read(&path)
                 .unwrap_or_else(|error| panic!("reading {}: {error}", path.display()));
             assert_eq!(
                 format!("{:x}", sha2::Sha256::digest(bytes)),
-                plugin
-                    .component_sha256
-                    .as_deref()
-                    .expect("component digest is present"),
+                plugin.component_sha256,
                 "{} has a stale component_sha256 pin",
                 plugin.name
             );
@@ -141,11 +134,7 @@ mod manifest_drift {
                 allowed.insert("local");
             }
 
-            let component = plugin
-                .component
-                .as_deref()
-                .expect("first-party plugin is component-backed");
-            let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join(component);
+            let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join(&plugin.component);
             let bytes = std::fs::read(&path)
                 .unwrap_or_else(|error| panic!("reading {}: {error}", path.display()));
             let mut level = 0usize;
