@@ -848,9 +848,9 @@ dependencies = [
 
 [[package]]
 name = "kyyn-core"
-version = "0.1.21"
+version = "0.1.22"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1767ff2213e1b0b08cbcc5efc5051a5264ee7a8662fd69bbf53909485153f37f"
+checksum = "976382421d580f5cf7afeb63ad4d50e19d9b6031e493371276740882a460cf43"
 dependencies = [
  "chrono",
  "kyyn-schema-macros",
@@ -978,9 +978,9 @@ dependencies = [
 
 [[package]]
 name = "kyyn-schema-macros"
-version = "0.1.21"
+version = "0.1.22"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "08a3be42bc85ce6c02eedc78c65a9c4ca21c67335cd01aa7c0ac27bfa80f6b42"
+checksum = "98fbc28503a15e2363645ee0c073ae04056b59d47797773e60567c1aa58de1ff"
 dependencies = [
  "proc-macro2",
  "quote",
