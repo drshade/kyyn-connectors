@@ -1,6 +1,5 @@
-# The first-party kyyn tap: sweep, kb, and the Microsoft Graph family,
-# served over the tap harness. This repo is never published to crates.io —
-# KBs pin it (repo, rev) in sources.ron and build it on first use.
+# The first-party kyyn tap: digest-pinned kyyn:tap@1 components plus their
+# repository-level contract gates. This package is not published to crates.io.
 [package]
 name = "kyyn-plugins"
 version = "0.1.0"
@@ -8,7 +7,7 @@ edition = "2024"
 license = "MIT OR Apache-2.0"
 publish = false
 
-[dependencies]
+[dev-dependencies]
 kyyn-core = "0.1.21"
 kyyn-plugin-git = { path = "crates/kyyn-plugin-git" }
 kyyn-plugin-graph = { path = "crates/kyyn-plugin-graph" }
@@ -16,8 +15,6 @@ kyyn-plugin-kb = { path = "crates/kyyn-plugin-kb" }
 kyyn-plugin-pack = { path = "crates/kyyn-plugin-pack" }
 kyyn-plugin-salesforce = { path = "crates/kyyn-plugin-salesforce" }
 kyyn-plugin-sweep = { path = "crates/kyyn-plugin-sweep" }
-
-[dev-dependencies]
 sha2 = "0.10"
 wasmparser = "=0.251.0"
 
