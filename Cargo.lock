@@ -791,17 +791,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "kyyn-component-kb"
-version = "0.1.0"
-dependencies = [
- "glob",
- "regex-lite",
- "ron",
- "serde",
- "wit-bindgen",
-]
-
-[[package]]
 name = "kyyn-component-pack"
 version = "0.1.0"
 dependencies = [
@@ -848,9 +837,9 @@ dependencies = [
 
 [[package]]
 name = "kyyn-core"
-version = "0.1.22"
+version = "0.1.23"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "976382421d580f5cf7afeb63ad4d50e19d9b6031e493371276740882a460cf43"
+checksum = "7954b1e648be15ef1a808376b3b85f4569a9884601aa50a6222fc1d084f1276d"
 dependencies = [
  "chrono",
  "kyyn-schema-macros",
@@ -913,19 +902,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "kyyn-plugin-kb"
-version = "0.1.0"
-dependencies = [
- "glob",
- "kyyn-core",
- "regex-lite",
- "ron",
- "serde",
- "sha2",
- "tempfile",
-]
-
-[[package]]
 name = "kyyn-plugin-pack"
 version = "0.1.0"
 dependencies = [
@@ -968,7 +944,6 @@ dependencies = [
  "kyyn-core",
  "kyyn-plugin-git",
  "kyyn-plugin-graph",
- "kyyn-plugin-kb",
  "kyyn-plugin-pack",
  "kyyn-plugin-salesforce",
  "kyyn-plugin-sweep",
@@ -978,9 +953,9 @@ dependencies = [
 
 [[package]]
 name = "kyyn-schema-macros"
-version = "0.1.22"
+version = "0.1.23"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "98fbc28503a15e2363645ee0c073ae04056b59d47797773e60567c1aa58de1ff"
+checksum = "88d0b678d289b238724f06534fc95a62a920efb1efd3ef26e52cd2639da2c318"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -1296,12 +1271,6 @@ dependencies = [
  "quote",
  "syn 2.0.118",
 ]
-
-[[package]]
-name = "regex-lite"
-version = "0.1.9"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "cab834c73d247e67f4fae452806d17d3c7501756d98c8808d7c9c7aa7d18f973"
 
 [[package]]
 name = "rend"

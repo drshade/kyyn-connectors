@@ -47,7 +47,7 @@ else
 fi
 flock -u 9
 
-guests="sweep git-repo kb pack salesforce graph-calendar graph-mail graph-chats graph-meetings sharepoint-file"
+guests="sweep git-repo pack salesforce graph-calendar graph-mail graph-chats graph-meetings sharepoint-file"
 packages=""
 for guest in $guests; do
   packages="$packages -p kyyn-component-$guest"

@@ -1,7 +1,7 @@
 # kyyn-plugins
 
 The first-party [kyyn](https://github.com/drshade/kyyn) tap: the
-`sweep`, `kb`, and Microsoft Graph family plugins.
+`sweep`, repository/pack, Salesforce, and Microsoft Graph family plugins.
 
 A tap is a plugin repository a KB pins at an immutable commit in its
 `sources.ron`; Kyyn fetches that exact tree and verifies each declared
@@ -34,3 +34,9 @@ allows provider download hosts under `*.sharepoint.com`; a personal-OneDrive
 download returned from another CDN family is refused rather than widening
 network authority implicitly. Add a reviewed suffix only when field evidence
 identifies the exact provider-owned host family.
+
+There is deliberately no raw Kyyn-KB import plugin. KB identity, schema and
+accept authority do not cross repositories; a future federation source may
+publish an immutable query result bound to the producer truth commit. Until
+that contract exists, ordinary `git-repo` evidence remains repository content,
+not another KB's ontology.

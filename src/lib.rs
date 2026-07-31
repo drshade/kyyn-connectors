@@ -9,7 +9,6 @@ fn plugin_table(name: &str) -> Option<Box<dyn SourcePlugin>> {
         "sweep" => Some(Box::new(kyyn_plugin_sweep::SweepPlugin)),
         "git-repo" => Some(Box::new(kyyn_plugin_git::GitRepoPlugin)),
         "salesforce" => Some(Box::new(kyyn_plugin_salesforce::SalesforcePlugin)),
-        "kb" => Some(Box::new(kyyn_plugin_kb::KbPlugin)),
         "pack" => Some(Box::new(kyyn_plugin_pack::PackPlugin)),
         "graph-mail" => Some(Box::new(kyyn_plugin_graph::GraphMailPlugin)),
         "graph-calendar" => Some(Box::new(kyyn_plugin_graph::GraphCalendarPlugin)),
@@ -38,7 +37,7 @@ mod manifest_drift {
     #[test]
     fn declared_config_specs_satisfy_the_plugins() {
         let manifest = manifest();
-        assert_eq!(manifest.plugins.len(), 10);
+        assert_eq!(manifest.plugins.len(), 9);
         for plugin in &manifest.plugins {
             let mut parts: Vec<String> = Vec::new();
             for f in &plugin.config {
