@@ -1,41 +1,32 @@
-# The first-party kyyn tap: digest-pinned kyyn:tap@1 components plus their
+# The first-party kyyn source: digest-pinned kyyn:source@1 components plus their
 # repository-level contract gates. This package is not published to crates.io.
 [package]
-name = "kyyn-plugins"
+name = "kyyn-connectors"
 version = "0.1.0"
 edition = "2024"
 license = "MIT OR Apache-2.0"
 publish = false
 
 [dev-dependencies]
-kyyn-core = "0.1.23"
-kyyn-plugin-git = { path = "crates/kyyn-plugin-git" }
-kyyn-plugin-graph = { path = "crates/kyyn-plugin-graph" }
-kyyn-plugin-pack = { path = "crates/kyyn-plugin-pack" }
-kyyn-plugin-salesforce = { path = "crates/kyyn-plugin-salesforce" }
-kyyn-plugin-sweep = { path = "crates/kyyn-plugin-sweep" }
+ron = "0.12"
+serde = { version = "1", features = ["derive"] }
 sha2 = "0.10"
 wasmparser = "=0.251.0"
 
 [workspace]
 resolver = "2"
 members = [
-    "component-guests/graph-calendar",
-    "component-guests/graph-chats",
-    "component-guests/graph-mail",
-    "component-guests/graph-meetings",
-    "component-guests/git-repo",
-    "component-guests/pack",
-    "component-guests/salesforce",
-    "component-guests/sharepoint-file",
-    "component-guests/sweep",
-    "crates/kyyn-plugin-git",
-    "crates/kyyn-plugin-bundle",
-    "crates/kyyn-plugin-graph",
-    "crates/kyyn-plugin-pack",
-    "crates/kyyn-plugin-salesforce",
-    "crates/kyyn-plugin-sweep",
-    "tools/componentize",
+    "connectors/sources/graph-calendar",
+    "connectors/sources/graph-chats",
+    "connectors/sources/graph-mail",
+    "connectors/sources/graph-meetings",
+    "connectors/sources/git-repo",
+    "connectors/sources/pack",
+    "connectors/sources/salesforce",
+    "connectors/sources/sharepoint-file",
+    "connectors/sources/sweep",
+    "crates/kyyn-source-bundle",
+    "tools/connector-componentize",
 ]
 
 [profile.release]

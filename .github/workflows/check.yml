@@ -1,19 +1,25 @@
-# The first-party tap's gate (ADR 0010): formatting, warning-denied clippy,
-# and every plugin's tests, on the pinned toolchain.
+# The first-party connector gate: one local/CI definition, on the pinned
+# toolchain. Hosted execution is an explicit, metered fallback.
 name: check
 on:
+  workflow_dispatch:
+    inputs:
+      hosted:
+        description: Use a metered GitHub-hosted runner as a manual fallback
+        required: false
+        type: boolean
+        default: false
   pull_request:
   push:
     branches: [main]
 jobs:
   check:
-    runs-on: ubuntu-latest
+    runs-on: ${{ fromJSON(inputs.hosted && '["ubuntu-latest"]' || '["self-hosted","linux","x64","kyyn-connectors-ci"]') }}
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
       - name: Install the pinned toolchain (rust-toolchain.toml)
         run: rustup show active-toolchain
       - uses: Swatinem/rust-cache@42dc69e1aa15d09112580998cf2ef0119e2e91ae # v2
-      - run: cargo fmt --all --check
-      - run: cargo clippy --workspace --all-targets -- -D warnings
-      - run: cargo test --workspace
-      - run: ./scripts/check-components.sh
+        if: ${{ inputs.hosted == true }}
+      - run: make check
