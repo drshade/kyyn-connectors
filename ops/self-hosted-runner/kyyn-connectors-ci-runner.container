@@ -1,0 +1,26 @@
+[Unit]
+Description=Repository-scoped GitHub Actions runner for drshade/kyyn-connectors
+Wants=network-online.target
+After=network-online.target
+
+[Container]
+Image=localhost/kyyn-actions-runner:2.336.0
+ContainerName=kyyn-connectors-ci-runner
+Environment=RUNNER_REPOSITORY=drshade/kyyn-connectors
+Environment=RUNNER_NAME=endor-kyyn-connectors-ci
+Environment=RUNNER_LABELS=kyyn-connectors-ci
+Secret=kyyn-connectors-ci-registration-token,type=env,target=RUNNER_TOKEN
+Volume=kyyn-connectors-ci-state.volume:/runner:U
+Volume=kyyn-connectors-ci-cache.volume:/cache:U
+ReadOnly=true
+Tmpfs=/tmp:rw,nodev,nosuid,size=4g
+PodmanArgs=--cap-drop=all --security-opt=no-new-privileges --pids-limit=4096 --memory=48g --cpus=14
+
+[Service]
+Restart=always
+RestartSec=10
+TimeoutStartSec=900
+TimeoutStopSec=90
+
+[Install]
+WantedBy=default.target

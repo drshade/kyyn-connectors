@@ -1,146 +1,241 @@
-//! Repository-level contract gates for the first-party component tap.
+//! Repository-level contract gates for first-party connector components.
 
 #[cfg(test)]
-use kyyn_core::plugin::SourcePlugin;
-
-#[cfg(test)]
-fn plugin_table(name: &str) -> Option<Box<dyn SourcePlugin>> {
-    match name {
-        "sweep" => Some(Box::new(kyyn_plugin_sweep::SweepPlugin)),
-        "git-repo" => Some(Box::new(kyyn_plugin_git::GitRepoPlugin)),
-        "salesforce" => Some(Box::new(kyyn_plugin_salesforce::SalesforcePlugin)),
-        "pack" => Some(Box::new(kyyn_plugin_pack::PackPlugin)),
-        "graph-mail" => Some(Box::new(kyyn_plugin_graph::GraphMailPlugin)),
-        "graph-calendar" => Some(Box::new(kyyn_plugin_graph::GraphCalendarPlugin)),
-        "graph-meetings" => Some(Box::new(kyyn_plugin_graph::GraphMeetingsPlugin)),
-        "graph-chats" => Some(Box::new(kyyn_plugin_graph::GraphChatsPlugin)),
-        "sharepoint-file" => Some(Box::new(kyyn_plugin_graph::SharepointFilePlugin)),
-        _ => None,
-    }
-}
-
-#[cfg(test)]
-mod manifest_drift {
-    use kyyn_core::tap::{TapConfigType, TapManifest};
+mod contract {
+    use serde::Deserialize;
     use sha2::Digest as _;
+    use std::collections::{BTreeSet, HashSet};
 
-    fn manifest() -> TapManifest {
-        let text = std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/kyyn-tap.ron"))
-            .expect("kyyn-tap.ron");
-        TapManifest::parse(&text).expect("published SDK accepts the manifest")
+    #[derive(Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct Manifest {
+        connector_manifest: u32,
+        sources: Vec<Source>,
+        #[serde(default)]
+        sinks: Vec<ron::Value>,
     }
 
-    /// THE drift guard: every plugin's declared config spec, filled with its
-    /// own examples/defaults, must assemble into a config the plugin's real
-    /// validate_config accepts — a spec that promises a field the code
-    /// rejects (or mistypes) fails here, not in an owner's install form.
+    #[derive(Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct Source {
+        name: String,
+        summary: String,
+        world: String,
+        namespace: String,
+        #[serde(default)]
+        capabilities: Capabilities,
+        component: String,
+        component_sha256: String,
+        #[serde(default)]
+        config: Vec<ConfigField>,
+    }
+
+    #[derive(Default, Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct Capabilities {
+        #[serde(default)]
+        requests: Vec<RequestGrant>,
+        #[serde(default)]
+        auth: Option<String>,
+        #[serde(default)]
+        repo: bool,
+    }
+
+    #[derive(Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct RequestGrant {
+        purpose: Purpose,
+        authority: String,
+        method: Method,
+        path: String,
+    }
+
+    #[derive(Deserialize)]
+    enum Purpose {
+        Observe,
+        Authenticate,
+    }
+
+    #[derive(Deserialize)]
+    enum Method {
+        Get,
+        Post,
+    }
+
+    #[derive(Default, Deserialize, PartialEq, Eq)]
+    enum ConfigType {
+        #[default]
+        Str,
+        HttpsOrigin,
+        Int,
+        Bool,
+        StrList,
+        Ron,
+        Path,
+    }
+
+    #[derive(Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct ConfigField {
+        name: String,
+        doc: String,
+        #[serde(default)]
+        ty: ConfigType,
+        #[serde(default)]
+        required: bool,
+        #[serde(default)]
+        example: Option<String>,
+        #[serde(default)]
+        default: Option<String>,
+    }
+
+    fn manifest() -> Manifest {
+        let text =
+            std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/kyyn-connectors.ron"))
+                .expect("kyyn-connectors.ron");
+        ron::Options::default()
+            .with_default_extension(ron::extensions::Extensions::IMPLICIT_SOME)
+            .from_str(&text)
+            .expect("repository manifest parses")
+    }
+
     #[test]
-    fn declared_config_specs_satisfy_the_plugins() {
+    fn manifest_is_direction_explicit_closed_and_reviewable() {
         let manifest = manifest();
-        assert_eq!(manifest.plugins.len(), 9);
-        for plugin in &manifest.plugins {
-            let mut parts: Vec<String> = Vec::new();
-            for f in &plugin.config {
-                assert!(
-                    !f.doc.is_empty(),
-                    "{}#{} needs a doc line",
-                    plugin.name,
-                    f.name
-                );
-                let Some(value) = f.example.as_ref().or(f.default.as_ref()) else {
-                    assert!(
-                        !f.required,
-                        "{}#{} is required but has no example",
-                        plugin.name, f.name
-                    );
-                    continue;
-                };
-                let rendered = match f.ty {
-                    TapConfigType::Int | TapConfigType::Bool | TapConfigType::Ron => value.clone(),
-                    TapConfigType::StrList => format!(
-                        "[{}]",
-                        value
-                            .split(',')
-                            .map(|s| format!("{:?}", s.trim()))
-                            .collect::<Vec<_>>()
-                            .join(", ")
-                    ),
-                    // Str and Path both RON-quote the raw value.
-                    TapConfigType::Str | TapConfigType::Path => format!("{value:?}"),
-                };
-                parts.push(format!("{}: {rendered}", f.name));
-            }
-            let config = format!("({})", parts.join(", "));
-            let result = super::plugin_table(&plugin.name)
-                .unwrap_or_else(|| panic!("manifest advertises unserved plugin '{}'", plugin.name))
-                .validate_config(&config);
+        assert_eq!(manifest.connector_manifest, 1);
+        assert!(
+            manifest.sinks.is_empty(),
+            "ADR 0020 has not frozen sink components"
+        );
+        assert_eq!(
+            manifest.sources.len(),
+            8,
+            "the explicit SharePoint deferral is documented"
+        );
+        let mut names = HashSet::new();
+        for source in &manifest.sources {
             assert!(
-                result.is_ok(),
-                "{}: spec-assembled config rejected: {:?}\n  config: {config}",
-                plugin.name,
-                result.err()
+                names.insert(&source.name),
+                "duplicate source {}",
+                source.name
             );
+            assert_eq!(source.world, "kyyn:source@1", "{} world", source.name);
+            assert!(!source.summary.trim().is_empty(), "{} summary", source.name);
+            assert!(
+                !source.namespace.trim().is_empty(),
+                "{} namespace",
+                source.name
+            );
+            assert!(
+                source.component.starts_with("components/sources/"),
+                "{} component direction must be visible in its path",
+                source.name
+            );
+            assert_eq!(source.component_sha256.len(), 64, "{} digest", source.name);
+
+            let mut fields = HashSet::new();
+            for field in &source.config {
+                assert!(
+                    fields.insert(&field.name),
+                    "{} duplicate config {}",
+                    source.name,
+                    field.name
+                );
+                assert!(
+                    !field.doc.trim().is_empty(),
+                    "{}#{} needs a doc",
+                    source.name,
+                    field.name
+                );
+                assert!(
+                    !field.required || field.example.is_some(),
+                    "{}#{} is required but has no example",
+                    source.name,
+                    field.name
+                );
+                let _ = &field.default;
+            }
+            for grant in &source.capabilities.requests {
+                assert!(grant.path.starts_with('/'), "{} request path", source.name);
+                match grant.purpose {
+                    Purpose::Observe => assert!(matches!(grant.method, Method::Get)),
+                    Purpose::Authenticate => assert!(matches!(grant.method, Method::Post)),
+                }
+                if let Some(field) = grant.authority.strip_prefix("config:") {
+                    assert!(
+                        source.config.iter().any(|candidate| {
+                            candidate.name == field && candidate.ty == ConfigType::HttpsOrigin
+                        }),
+                        "{} request authority field {} is not HttpsOrigin",
+                        source.name,
+                        field
+                    );
+                } else {
+                    assert!(grant.authority.starts_with("https://"));
+                    assert!(!grant.authority.ends_with('/'));
+                }
+            }
         }
     }
 
     #[test]
     fn committed_component_digests_match_the_manifest() {
-        for plugin in manifest().plugins {
-            let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join(&plugin.component);
+        for source in manifest().sources {
+            let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join(&source.component);
             let bytes = std::fs::read(&path)
                 .unwrap_or_else(|error| panic!("reading {}: {error}", path.display()));
             assert_eq!(
                 format!("{:x}", sha2::Sha256::digest(bytes)),
-                plugin.component_sha256,
+                source.component_sha256,
                 "{} has a stale component_sha256 pin",
-                plugin.name
+                source.name
             );
         }
     }
 
     #[test]
     fn vendored_wit_matches_the_frozen_engine_contract() {
-        const FROZEN_TAP_WIT_SHA256: &str =
-            "b8ca45274112e5e2eddbb722b9ad5e67f50db19b5a5f1b7606aa02a2e93e58df";
+        const FROZEN_SOURCE_WIT_SHA256: &str =
+            "39b217ca312114ce734f880da68ab4d79c6ad1498639f7534bd5db7e4faf18e7";
         assert_eq!(
             format!(
                 "{:x}",
-                sha2::Sha256::digest(include_bytes!("../wit/tap.wit"))
+                sha2::Sha256::digest(include_bytes!("../wit/source.wit"))
             ),
-            FROZEN_TAP_WIT_SHA256,
-            "wit/tap.wit drifted from kyyn's frozen kyyn:tap@1 contract"
+            FROZEN_SOURCE_WIT_SHA256,
+            "wit/source.wit drifted from kyyn's frozen kyyn:source@1 contract"
         );
     }
 
     #[test]
     fn component_imports_are_a_subset_of_declared_capabilities() {
-        for plugin in manifest().plugins {
-            let mut allowed = std::collections::BTreeSet::from(["control", "evidence"]);
-            if !plugin.capabilities.network.is_empty() {
+        for source in manifest().sources {
+            let mut allowed = BTreeSet::from(["control", "evidence"]);
+            if !source.capabilities.requests.is_empty() {
                 allowed.insert("http");
             }
-            if plugin.capabilities.auth.is_some() {
+            if source.capabilities.auth.is_some() {
                 allowed.insert("secrets");
             }
-            if plugin.capabilities.repo {
+            if source.capabilities.repo {
                 allowed.insert("repo");
             }
-            if plugin
+            if source
                 .config
                 .iter()
-                .any(|field| field.ty == TapConfigType::Path)
+                .any(|field| field.ty == ConfigType::Path)
             {
                 allowed.insert("local");
             }
 
-            let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join(&plugin.component);
+            let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join(&source.component);
             let bytes = std::fs::read(&path)
                 .unwrap_or_else(|error| panic!("reading {}: {error}", path.display()));
             let mut level = 0usize;
-            let mut imports = std::collections::BTreeSet::new();
+            let mut imports = BTreeSet::new();
             for payload in wasmparser::Parser::new(0).parse_all(&bytes) {
                 match payload
-                    .unwrap_or_else(|error| panic!("parsing {} component: {error}", plugin.name))
+                    .unwrap_or_else(|error| panic!("parsing {} component: {error}", source.name))
                 {
                     wasmparser::Payload::Version { .. } => level += 1,
                     wasmparser::Payload::End(_) => level -= 1,
@@ -148,7 +243,7 @@ mod manifest_drift {
                         for import in section {
                             let name = import.expect("component import").name.name;
                             let interface = name
-                                .strip_prefix("kyyn:tap/")
+                                .strip_prefix("kyyn:source/")
                                 .and_then(|name| name.split('@').next())
                                 .unwrap_or(name);
                             imports.insert(interface.to_string());
@@ -160,13 +255,11 @@ mod manifest_drift {
             let excess = imports
                 .iter()
                 .filter(|import| !allowed.contains(import.as_str()))
-                .cloned()
                 .collect::<Vec<_>>();
             assert!(
                 excess.is_empty(),
-                "{} imports undeclared capabilities {excess:?}; imports={imports:?}, \
-                 allowed={allowed:?}",
-                plugin.name
+                "{} imports undeclared capabilities {excess:?}; imports={imports:?}, allowed={allowed:?}",
+                source.name
             );
         }
     }

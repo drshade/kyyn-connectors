@@ -1,0 +1,5 @@
+[Unit]
+Description=Registration and diagnostics for the Kyyn connectors CI runner
+
+[Volume]
+VolumeName=kyyn-connectors-ci-state

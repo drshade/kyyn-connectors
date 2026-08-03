@@ -1,0 +1,43 @@
+FROM docker.io/library/ubuntu@sha256:52df9b1ee71626e0088f7d400d5c6b5f7bb916f8f0c82b474289a4ece6cf3faf
+
+ARG RUNNER_VERSION=2.336.0
+ARG RUNNER_SHA256=04cf0be1aff4c3ec3554466c39124ca250e3effd8873bb7e8d68535aa9505d5d
+ARG RUSTUP_SHA256=4acc9acc76d5079515b46346a485974457b5a79893cfb01112423c89aeb5aa10
+
+SHELL ["/bin/bash", "-o", "pipefail", "-c"]
+
+RUN apt-get update \
+    && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+       bash build-essential ca-certificates cmake curl git jq libssl-dev \
+       libssh2-1-dev pkg-config ruby xz-utils zlib1g-dev \
+    && rm -rf /var/lib/apt/lists/*
+
+RUN mkdir -p /opt/actions-runner \
+    && curl --fail --location --proto '=https' --tlsv1.2 \
+       "https://github.com/actions/runner/releases/download/v${RUNNER_VERSION}/actions-runner-linux-x64-${RUNNER_VERSION}.tar.gz" \
+       --output /tmp/actions-runner.tar.gz \
+    && echo "${RUNNER_SHA256}  /tmp/actions-runner.tar.gz" | sha256sum --check --strict \
+    && tar -xzf /tmp/actions-runner.tar.gz -C /opt/actions-runner \
+    && /opt/actions-runner/bin/installdependencies.sh \
+    && rm /tmp/actions-runner.tar.gz
+
+RUN curl --fail --location --proto '=https' --tlsv1.2 \
+       https://static.rust-lang.org/rustup/dist/x86_64-unknown-linux-gnu/rustup-init \
+       --output /usr/local/bin/rustup-init \
+    && echo "${RUSTUP_SHA256}  /usr/local/bin/rustup-init" | sha256sum --check --strict \
+    && chmod 0755 /usr/local/bin/rustup-init \
+    && useradd --create-home --uid 1001 runner
+
+COPY --chown=runner:runner entrypoint.sh job-completed.sh /opt/kyyn-runner/
+RUN chmod 0755 /opt/kyyn-runner/entrypoint.sh /opt/kyyn-runner/job-completed.sh
+
+ENV CARGO_HOME=/cache/cargo \
+    CARGO_TARGET_DIR=/cache/target \
+    RUSTUP_HOME=/cache/rustup \
+    HOME=/runner/home \
+    PATH=/cache/cargo/bin:/usr/local/bin:/usr/bin:/bin \
+    ACTIONS_RUNNER_HOOK_JOB_COMPLETED=/opt/kyyn-runner/job-completed.sh
+
+USER runner
+WORKDIR /runner
+ENTRYPOINT ["/opt/kyyn-runner/entrypoint.sh"]
