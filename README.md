@@ -2,7 +2,7 @@
 
 The first-party [kyyn](https://github.com/drshade/kyyn) connector repository:
 the `sweep`, repository/pack, Salesforce, and Microsoft Graph source families,
-plus the authority-distinct `file-replace` sink.
+plus the authority-distinct `file-replace` and `git-ref` sinks.
 
 A connector repository is code a KB pins at an immutable commit in
 `connectors.ron`; configured source instances live separately in `sources.ron`.
@@ -17,8 +17,8 @@ explicit:
 - `wit/source.wit` is a byte-identical vendoring of Kyyn's documented, frozen
   host/guest contract. The test gate pins its digest so a hand edit cannot
   silently change `kyyn:source@1`.
-- `wit/sink.wit` is the same byte-identical gate for `kyyn:sink@1`; its first
-  advertised component imports exactly the host-owned `file-replace` operation
+- `wit/sink.wit` is the same byte-identical gate for `kyyn:sink@1`; each sink
+  component imports exactly its one host-owned write operation
   and has no ambient WASI authority.
 - `connectors/sources/` contains the capability-limited guest implementations.
   The Microsoft family uses one shared Graph runtime for auth, bounded HTTP,

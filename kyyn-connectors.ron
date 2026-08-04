@@ -126,5 +126,13 @@
          config: [
             (name: "path", doc: "Absolute normalized destination path; the executing machine must trust its containing root.", ty: Path, required: true, example: Some("/srv/kyyn/report.bin")),
          ]),
+        (name: "git-ref", summary: "Compare-and-swap one owner-consented branch to one accepted preconstructed commit.",
+         world: "kyyn:sink@1", delivery: CasConvergent,
+         component: "components/sinks/git-ref.wasm",
+         component_sha256: "53d4d3581a1bba0017cbacbe86a4b216eb0651a638772a7e678f0bbd2510cd80",
+         config: [
+            (name: "repository", doc: "Absolute ssh:// or https:// URL of the foreign Git repository.", required: true, example: Some("ssh://git.example/exports/team.git")),
+            (name: "reference", doc: "Canonical full branch reference bound by standing consent.", required: true, example: Some("refs/heads/main")),
+         ]),
     ],
 )

@@ -1,0 +1,14 @@
+[package]
+name = "kyyn-component-git-ref"
+version = "0.1.0"
+edition = "2024"
+license = "MIT OR Apache-2.0"
+publish = false
+
+[lib]
+crate-type = ["cdylib"]
+
+[target.'cfg(all(target_arch = "wasm32", target_os = "unknown"))'.dependencies]
+ron = "0.12"
+serde = { version = "1", features = ["derive"] }
+wit-bindgen = "0.58"

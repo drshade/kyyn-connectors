@@ -48,7 +48,7 @@ fi
 flock -u 9
 
 source_guests="sweep git-repo pack salesforce graph-calendar graph-mail graph-chats graph-meetings sharepoint-file"
-sink_guests="file-replace"
+sink_guests="file-replace git-ref"
 source_packages=""
 sink_packages=""
 for guest in $source_guests; do
