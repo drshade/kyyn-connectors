@@ -2,7 +2,7 @@
 mod guest {
     mod bindings {
         wit_bindgen::generate!({
-            path: "../../../wit",
+            path: "../../../wit/source.wit",
             world: "source",
         });
     }

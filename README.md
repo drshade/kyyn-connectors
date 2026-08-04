@@ -1,27 +1,31 @@
 # kyyn-connectors
 
 The first-party [kyyn](https://github.com/drshade/kyyn) connector repository:
-the `sweep`, repository/pack, Salesforce, and Microsoft Graph source families.
+the `sweep`, repository/pack, Salesforce, and Microsoft Graph source families,
+plus the authority-distinct `file-replace` sink.
 
 A connector repository is code a KB pins at an immutable commit in
 `connectors.ron`; configured source instances live separately in `sources.ron`.
 Kyyn fetches that exact tree and verifies each declared
 component before execution. This repo is what a fresh `kyyn init` pins —
-and the reference example for writing your own source.
+and the reference example for writing your own connector.
 
-Every advertised connector is served by a committed, digest-pinned
-`kyyn:source@1` WebAssembly component. The repository keeps four boundaries
+Every advertised connector is served by a committed, digest-pinned,
+direction-distinct WebAssembly component. The repository keeps four boundaries
 explicit:
 
 - `wit/source.wit` is a byte-identical vendoring of Kyyn's documented, frozen
   host/guest contract. The test gate pins its digest so a hand edit cannot
   silently change `kyyn:source@1`.
+- `wit/sink.wit` is the same byte-identical gate for `kyyn:sink@1`; its first
+  advertised component imports exactly the host-owned `file-replace` operation
+  and has no ambient WASI authority.
 - `connectors/sources/` contains the capability-limited guest implementations.
   The Microsoft family uses one shared Graph runtime for auth, bounded HTTP,
   paging, normalization, and evidence construction, with tiny per-connector
   entry crates selecting each fetch mode.
-- `components/sources/` contains only source executable artifacts consumers pin;
-  `components/sinks/` enters with ADR 0020.
+- `components/sources/` and `components/sinks/` contain only direction-explicit
+  executable artifacts consumers pin.
 - `crates/` contains reusable, execution-neutral connector logic consumed by
   component guests; the repository has no native source executable.
 

@@ -12,7 +12,7 @@ mod contract {
         connector_manifest: u32,
         sources: Vec<Source>,
         #[serde(default)]
-        sinks: Vec<ron::Value>,
+        sinks: Vec<Sink>,
     }
 
     #[derive(Deserialize)]
@@ -28,6 +28,25 @@ mod contract {
         component_sha256: String,
         #[serde(default)]
         config: Vec<ConfigField>,
+    }
+
+    #[derive(Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct Sink {
+        name: String,
+        summary: String,
+        world: String,
+        component: String,
+        component_sha256: String,
+        delivery: SinkDelivery,
+        #[serde(default)]
+        config: Vec<ConfigField>,
+    }
+
+    #[derive(Deserialize)]
+    enum SinkDelivery {
+        Convergent,
+        CasConvergent,
     }
 
     #[derive(Default, Deserialize)]
@@ -62,7 +81,7 @@ mod contract {
         Post,
     }
 
-    #[derive(Default, Deserialize, PartialEq, Eq)]
+    #[derive(Debug, Default, Deserialize, PartialEq, Eq)]
     enum ConfigType {
         #[default]
         Str,
@@ -103,10 +122,7 @@ mod contract {
     fn manifest_is_direction_explicit_closed_and_reviewable() {
         let manifest = manifest();
         assert_eq!(manifest.connector_manifest, 1);
-        assert!(
-            manifest.sinks.is_empty(),
-            "ADR 0020 has not frozen sink components"
-        );
+        assert_eq!(manifest.sinks.len(), 1, "one frozen local-file sink");
         assert_eq!(
             manifest.sources.len(),
             8,
@@ -176,11 +192,27 @@ mod contract {
                 }
             }
         }
+
+        let sink = &manifest.sinks[0];
+        assert!(names.insert(&sink.name), "connector names are global");
+        assert_eq!(sink.name, "file-replace");
+        assert_eq!(sink.world, "kyyn:sink@1");
+        assert!(matches!(sink.delivery, SinkDelivery::Convergent));
+        assert!(!sink.summary.trim().is_empty());
+        assert_eq!(sink.component, "components/sinks/file-replace.wasm");
+        assert_eq!(sink.component_sha256.len(), 64);
+        assert_eq!(sink.config.len(), 1);
+        assert_eq!(sink.config[0].name, "path");
+        assert_eq!(sink.config[0].ty, ConfigType::Path);
+        assert!(sink.config[0].required);
+        assert!(sink.config[0].example.is_some());
+        assert!(!sink.config[0].doc.trim().is_empty());
     }
 
     #[test]
     fn committed_component_digests_match_the_manifest() {
-        for source in manifest().sources {
+        let manifest = manifest();
+        for source in manifest.sources {
             let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join(&source.component);
             let bytes = std::fs::read(&path)
                 .unwrap_or_else(|error| panic!("reading {}: {error}", path.display()));
@@ -189,6 +221,17 @@ mod contract {
                 source.component_sha256,
                 "{} has a stale component_sha256 pin",
                 source.name
+            );
+        }
+        for sink in manifest.sinks {
+            let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join(&sink.component);
+            let bytes = std::fs::read(&path)
+                .unwrap_or_else(|error| panic!("reading {}: {error}", path.display()));
+            assert_eq!(
+                format!("{:x}", sha2::Sha256::digest(bytes)),
+                sink.component_sha256,
+                "{} has a stale component_sha256 pin",
+                sink.name
             );
         }
     }
@@ -205,11 +248,22 @@ mod contract {
             FROZEN_SOURCE_WIT_SHA256,
             "wit/source.wit drifted from kyyn's frozen kyyn:source@1 contract"
         );
+        const FROZEN_SINK_WIT_SHA256: &str =
+            "5b94c2b6c244c4f50262f6d32ff6846fcb86e4ebe9359c8fea662aee0e74435c";
+        assert_eq!(
+            format!(
+                "{:x}",
+                sha2::Sha256::digest(include_bytes!("../wit/sink.wit"))
+            ),
+            FROZEN_SINK_WIT_SHA256,
+            "wit/sink.wit drifted from kyyn's frozen kyyn:sink@1 contract"
+        );
     }
 
     #[test]
     fn component_imports_are_a_subset_of_declared_capabilities() {
-        for source in manifest().sources {
+        let manifest = manifest();
+        for source in manifest.sources {
             let mut allowed = BTreeSet::from(["control", "evidence"]);
             if !source.capabilities.requests.is_empty() {
                 allowed.insert("http");
@@ -260,6 +314,39 @@ mod contract {
                 excess.is_empty(),
                 "{} imports undeclared capabilities {excess:?}; imports={imports:?}, allowed={allowed:?}",
                 source.name
+            );
+        }
+
+        for sink in manifest.sinks {
+            let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join(&sink.component);
+            let bytes = std::fs::read(&path)
+                .unwrap_or_else(|error| panic!("reading {}: {error}", path.display()));
+            let mut level = 0usize;
+            let mut imports = BTreeSet::new();
+            for payload in wasmparser::Parser::new(0).parse_all(&bytes) {
+                match payload
+                    .unwrap_or_else(|error| panic!("parsing {} component: {error}", sink.name))
+                {
+                    wasmparser::Payload::Version { .. } => level += 1,
+                    wasmparser::Payload::End(_) => level -= 1,
+                    wasmparser::Payload::ComponentImportSection(section) if level == 1 => {
+                        for import in section {
+                            let name = import.expect("component import").name.name;
+                            let interface = name
+                                .strip_prefix("kyyn:sink/")
+                                .and_then(|name| name.split('@').next())
+                                .unwrap_or(name);
+                            imports.insert(interface.to_string());
+                        }
+                    }
+                    _ => {}
+                }
+            }
+            assert_eq!(
+                imports,
+                BTreeSet::from(["file-replace".to_string()]),
+                "{} must import exactly its one host effect operation",
+                sink.name
             );
         }
     }

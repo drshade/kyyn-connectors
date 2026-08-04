@@ -1,5 +1,5 @@
-# The first-party kyyn source: digest-pinned kyyn:source@1 components plus their
-# repository-level contract gates. This package is not published to crates.io.
+# The first-party Kyyn connector repository: digest-pinned, direction-distinct
+# source and sink components plus their repository-level contract gates.
 [package]
 name = "kyyn-connectors"
 version = "0.1.0"
@@ -16,6 +16,7 @@ wasmparser = "=0.251.0"
 [workspace]
 resolver = "2"
 members = [
+    "connectors/sinks/file-replace",
     "connectors/sources/graph-calendar",
     "connectors/sources/graph-chats",
     "connectors/sources/graph-mail",

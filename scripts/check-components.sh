@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Reproducibly build the committed kyyn:source@1 guest components. Component
+# Reproducibly build the committed direction-distinct guest components. Component
 # construction is a trusted release activity; Kyyn consumers execute only
 # the committed, digest-pinned artifacts.
 set -euo pipefail
@@ -47,10 +47,15 @@ else
 fi
 flock -u 9
 
-guests="sweep git-repo pack salesforce graph-calendar graph-mail graph-chats graph-meetings sharepoint-file"
-packages=""
-for guest in $guests; do
-  packages="$packages -p kyyn-component-$guest"
+source_guests="sweep git-repo pack salesforce graph-calendar graph-mail graph-chats graph-meetings sharepoint-file"
+sink_guests="file-replace"
+source_packages=""
+sink_packages=""
+for guest in $source_guests; do
+  source_packages="$source_packages -p kyyn-component-$guest"
+done
+for guest in $sink_guests; do
+  sink_packages="$sink_packages -p kyyn-component-$guest"
 done
 
 (
@@ -61,14 +66,22 @@ done
   export CARGO_TARGET_WASM32_UNKNOWN_UNKNOWN_RUSTFLAGS="--sysroot=${stable_sysroot} \
 --remap-path-prefix=${stable_sysroot}=/rust \
 -C metadata=kyyn-first-party-source-v1"
-  cargo build --locked --quiet --release --target wasm32-unknown-unknown $packages
+  cargo build --locked --quiet --release --target wasm32-unknown-unknown $source_packages
   cargo clippy --locked --quiet --release --target wasm32-unknown-unknown \
-      $packages -- -D warnings
+      $source_packages -- -D warnings
+
+  export CARGO_TARGET_WASM32_UNKNOWN_UNKNOWN_RUSTFLAGS="--sysroot=${stable_sysroot} \
+--remap-path-prefix=${stable_sysroot}=/rust \
+-C metadata=kyyn-first-party-sink-v1"
+  cargo build --locked --quiet --release --target wasm32-unknown-unknown $sink_packages
+  cargo clippy --locked --quiet --release --target wasm32-unknown-unknown \
+      $sink_packages -- -D warnings
 )
 
 mkdir -p "$repo_root/components/sources"
+mkdir -p "$repo_root/components/sinks"
 failed=false
-for guest in $guests; do
+for guest in $source_guests $sink_guests; do
   crate_name="${guest//-/_}"
   core="$repro/wasm32-unknown-unknown/release/kyyn_component_${crate_name}.wasm"
   built="$repro/${guest}.wasm"
@@ -81,11 +94,15 @@ for guest in $guests; do
     exit 1
   }
 
-  committed="$repo_root/components/sources/${guest}.wasm"
+  case " $sink_guests " in
+    *" $guest "*) direction=sinks ;;
+    *) direction=sources ;;
+  esac
+  committed="$repo_root/components/${direction}/${guest}.wasm"
   digest="$(sha256sum "$built" | cut -d' ' -f1)"
   if $update; then
     cp "$built" "$committed"
-    echo "updated components/sources/${guest}.wasm ($digest)"
+    echo "updated components/${direction}/${guest}.wasm ($digest)"
   elif ! cmp -s "$built" "$committed"; then
     echo "$guest: committed component is stale (rebuilt $digest)" >&2
     echo "  run scripts/check-components.sh --update and re-pin kyyn-connectors.ron" >&2
@@ -96,10 +113,14 @@ $failed && exit 1
 
 if $update; then
   echo "components updated — re-pin component_sha256 in kyyn-connectors.ron:"
-  for guest in $guests; do
-    printf '  %-10s %s\n' \
-      "$guest" \
-      "$(sha256sum "$repo_root/components/sources/${guest}.wasm" | cut -d' ' -f1)"
+  for guest in $source_guests $sink_guests; do
+    case " $sink_guests " in
+      *" $guest "*) direction=sinks ;;
+      *) direction=sources ;;
+    esac
+    printf '  %-16s %s\n' \
+      "$direction/$guest" \
+      "$(sha256sum "$repo_root/components/${direction}/${guest}.wasm" | cut -d' ' -f1)"
   done
 fi
-echo "components: kyyn:source@1 guests compile and componentize reproducibly"
+echo "components: kyyn:source@1 and kyyn:sink@1 guests compile and componentize reproducibly"
