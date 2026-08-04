@@ -122,7 +122,7 @@ mod contract {
     fn manifest_is_direction_explicit_closed_and_reviewable() {
         let manifest = manifest();
         assert_eq!(manifest.connector_manifest, 1);
-        assert_eq!(manifest.sinks.len(), 1, "one frozen local-file sink");
+        assert_eq!(manifest.sinks.len(), 2, "two frozen initial sinks");
         assert_eq!(
             manifest.sources.len(),
             8,
@@ -193,20 +193,62 @@ mod contract {
             }
         }
 
-        let sink = &manifest.sinks[0];
-        assert!(names.insert(&sink.name), "connector names are global");
-        assert_eq!(sink.name, "file-replace");
-        assert_eq!(sink.world, "kyyn:sink@1");
-        assert!(matches!(sink.delivery, SinkDelivery::Convergent));
-        assert!(!sink.summary.trim().is_empty());
-        assert_eq!(sink.component, "components/sinks/file-replace.wasm");
-        assert_eq!(sink.component_sha256.len(), 64);
-        assert_eq!(sink.config.len(), 1);
-        assert_eq!(sink.config[0].name, "path");
-        assert_eq!(sink.config[0].ty, ConfigType::Path);
-        assert!(sink.config[0].required);
-        assert!(sink.config[0].example.is_some());
-        assert!(!sink.config[0].doc.trim().is_empty());
+        for sink in &manifest.sinks {
+            assert!(names.insert(&sink.name), "connector names are global");
+            assert_eq!(sink.world, "kyyn:sink@1", "{} world", sink.name);
+            assert!(!sink.summary.trim().is_empty(), "{} summary", sink.name);
+            assert!(
+                sink.component.starts_with("components/sinks/"),
+                "{} component direction must be visible in its path",
+                sink.name
+            );
+            assert_eq!(sink.component_sha256.len(), 64, "{} digest", sink.name);
+            let mut fields = HashSet::new();
+            for field in &sink.config {
+                assert!(
+                    fields.insert(&field.name),
+                    "{} duplicate config {}",
+                    sink.name,
+                    field.name
+                );
+                assert!(
+                    !field.doc.trim().is_empty(),
+                    "{}#{} doc",
+                    sink.name,
+                    field.name
+                );
+                assert!(
+                    !field.required || field.example.is_some(),
+                    "{}#{} is required but has no example",
+                    sink.name,
+                    field.name
+                );
+                let _ = &field.default;
+            }
+        }
+
+        let file = manifest
+            .sinks
+            .iter()
+            .find(|sink| sink.name == "file-replace")
+            .expect("file-replace sink");
+        assert!(matches!(file.delivery, SinkDelivery::Convergent));
+        assert_eq!(file.component, "components/sinks/file-replace.wasm");
+        assert_eq!(file.config.len(), 1);
+        assert_eq!(file.config[0].name, "path");
+        assert_eq!(file.config[0].ty, ConfigType::Path);
+
+        let git = manifest
+            .sinks
+            .iter()
+            .find(|sink| sink.name == "git-ref")
+            .expect("git-ref sink");
+        assert!(matches!(git.delivery, SinkDelivery::CasConvergent));
+        assert_eq!(git.component, "components/sinks/git-ref.wasm");
+        assert_eq!(git.config.len(), 2);
+        assert_eq!(git.config[0].name, "repository");
+        assert_eq!(git.config[1].name, "reference");
+        assert!(git.config.iter().all(|field| field.required));
     }
 
     #[test]
@@ -249,7 +291,7 @@ mod contract {
             "wit/source.wit drifted from kyyn's frozen kyyn:source@1 contract"
         );
         const FROZEN_SINK_WIT_SHA256: &str =
-            "5b94c2b6c244c4f50262f6d32ff6846fcb86e4ebe9359c8fea662aee0e74435c";
+            "99302e9ac8eef35eaea84f91f20f8e7a93a3597ad8bdd2aad76c2a3beb1ef341";
         assert_eq!(
             format!(
                 "{:x}",
@@ -342,9 +384,9 @@ mod contract {
                     _ => {}
                 }
             }
+            let expected = BTreeSet::from([sink.name.clone()]);
             assert_eq!(
-                imports,
-                BTreeSet::from(["file-replace".to_string()]),
+                imports, expected,
                 "{} must import exactly its one host effect operation",
                 sink.name
             );

@@ -42,6 +42,49 @@ interface file-replace {
     ) -> result<replace-outcome, host-failure>;
 }
 
+/// One host-bound compare-and-swap of one consented foreign branch. The
+/// repository and reference are deliberately absent: the host binds them from
+/// the accepted sink declaration and machine authority.
+interface git-ref {
+    record applied {
+        previous-oid: string,
+        resulting-oid: string,
+    }
+
+    record already-converged {
+        resulting-oid: string,
+    }
+
+    record conflict {
+        expected-oid: string,
+        /// None means the consented branch is absent.
+        observed-oid: option<string>,
+    }
+
+    variant transition-outcome {
+        applied(applied),
+        already-converged(already-converged),
+        conflict(conflict),
+    }
+
+    record host-failure {
+        /// Stable bounded machine-readable code.
+        code: string,
+        /// Bounded human diagnostic; never object bytes or credentials.
+        message: string,
+        retryable: bool,
+    }
+
+    /// Ensure exactly the accepted one-parent commit transition. An invocation
+    /// may call this at most once; the host revalidates the exact bundle and
+    /// enforces the claim, target authority and ref CAS.
+    ensure: func(
+        expected-oid: string,
+        new-oid: string,
+        bundle: list<u8>,
+    ) -> result<transition-outcome, host-failure>;
+}
+
 /// Direction-distinct sink behaviour. These exports carry no authority by
 /// themselves. Validation and rendering execute with all write handlers
 /// disabled; apply receives only the imports earned by accepted consent.
@@ -56,8 +99,8 @@ interface api {
     record effect {
         /// Canonical RON config text from the accepted sink declaration.
         config: string,
-        /// Target identity rendered and accepted by the owner. The file sink
-        /// requires lowercase SHA-256.
+        /// Connector-defined canonical target identity rendered and accepted
+        /// by the owner; it never grants destination authority.
         expected-target: string,
         payload-media-type: string,
         /// Exact accepted payload bytes from the intended-effect envelope.
@@ -89,5 +132,19 @@ interface api {
 /// no WASI imports and intentionally shares no interface with kyyn:source@1.
 world sink {
     import file-replace;
+    export api;
+}
+
+/// Direction- and effect-distinct world for the federation sink guest.
+world git-ref-sink {
+    import git-ref;
+    export api;
+}
+
+/// Host union used by the engine to instantiate effect-distinct components.
+/// Each component's actual import set remains its exact effect signature.
+world host-sink {
+    import file-replace;
+    import git-ref;
     export api;
 }

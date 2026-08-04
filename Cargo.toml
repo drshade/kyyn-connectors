@@ -17,6 +17,7 @@ wasmparser = "=0.251.0"
 resolver = "2"
 members = [
     "connectors/sinks/file-replace",
+    "connectors/sinks/git-ref",
     "connectors/sources/graph-calendar",
     "connectors/sources/graph-chats",
     "connectors/sources/graph-mail",
