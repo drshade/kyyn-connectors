@@ -1,0 +1,93 @@
+package kyyn:sink@1.0.0;
+
+/// The first write-distinct host capability. The target path is deliberately
+/// absent: the host binds one accepted sink instance to one consented file.
+interface file-replace {
+    record applied {
+        previous-sha256: string,
+        resulting-sha256: string,
+        bytes: u64,
+    }
+
+    record already-converged {
+        resulting-sha256: string,
+        bytes: u64,
+    }
+
+    record conflict {
+        expected-sha256: string,
+        observed-sha256: string,
+    }
+
+    variant replace-outcome {
+        applied(applied),
+        already-converged(already-converged),
+        conflict(conflict),
+    }
+
+    record host-failure {
+        /// Stable bounded machine-readable code.
+        code: string,
+        /// Bounded human diagnostic; never target bytes or credentials.
+        message: string,
+        retryable: bool,
+    }
+
+    /// Compare the host-bound existing regular file with `expected-current-sha256`
+    /// and atomically replace it with the exact accepted bytes. An invocation may
+    /// call this at most once; the host enforces the claim and target authority.
+    replace: func(
+        expected-current-sha256: string,
+        replacement: list<u8>,
+    ) -> result<replace-outcome, host-failure>;
+}
+
+/// Direction-distinct sink behaviour. These exports carry no authority by
+/// themselves. Validation and rendering execute with all write handlers
+/// disabled; apply receives only the imports earned by accepted consent.
+interface api {
+    record connector-describe {
+        name: string,
+    }
+
+    /// The complete accepted input to connector validation/render/apply. The
+    /// engine independently binds the config and envelope hashes; the component
+    /// cannot replace them with values of its own.
+    record effect {
+        /// Canonical RON config text from the accepted sink declaration.
+        config: string,
+        /// Target identity rendered and accepted by the owner. The file sink
+        /// requires lowercase SHA-256.
+        expected-target: string,
+        payload-media-type: string,
+        /// Exact accepted payload bytes from the intended-effect envelope.
+        payload: list<u8>,
+    }
+
+    record effect-rendering {
+        /// Concrete destination shown on the owner review surface.
+        destination: string,
+        /// Bounded connector-specific summary; the engine separately renders
+        /// the authoritative payload bytes and target identity.
+        summary: string,
+    }
+
+    record apply-report {
+        /// Bounded non-authoritative guest note. The engine constructs the
+        /// authoritative outcome only from the host operation it observed.
+        note: string,
+    }
+
+    describe: func() -> connector-describe;
+    validate-config: func(config: string) -> result<_, string>;
+    validate-effect: func(effect: effect) -> result<_, string>;
+    render-effect: func(effect: effect) -> result<effect-rendering, string>;
+    apply: func(effect: effect) -> result<apply-report, string>;
+}
+
+/// A sink component's actual import set is its effect signature. The world has
+/// no WASI imports and intentionally shares no interface with kyyn:source@1.
+world sink {
+    import file-replace;
+    export api;
+}

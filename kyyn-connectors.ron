@@ -1,7 +1,7 @@
-// First-party, digest-pinned kyyn:source@1 connectors. Every HTTP grant is
-// derived from the guest's real request set; no repository-level authority is
-// implied by co-location. SharePoint is intentionally not advertised until
-// its dynamic pre-authorized download path has an honest authority contract.
+// First-party, digest-pinned, direction-distinct connectors. Every authority
+// grant belongs to one component; repository co-location grants no union.
+// SharePoint is intentionally not advertised until its dynamic pre-authorized
+// download path has an honest authority contract.
 (
     connector_manifest: 1,
     sources: [
@@ -116,6 +116,15 @@
             (name: "owner_addresses", doc: "Your own addresses (lowercased).", ty: StrList, example: Some("you@company.com")),
             (name: "client_id", doc: "Azure app id — leave empty for the shared multi-tenant kyyn app.", default: Some("53ddb21b-849f-45a3-8168-8a0e555f386f")),
             (name: "tenant", doc: "Entra tenant GUID, or organizations.", default: Some("organizations")),
+         ]),
+    ],
+    sinks: [
+        (name: "file-replace", summary: "Atomically replace one owner-consented local file when its current digest matches.",
+         world: "kyyn:sink@1", delivery: Convergent,
+         component: "components/sinks/file-replace.wasm",
+         component_sha256: "3f2b81ef7ea14ad15cd28ca2aec6092ed746766944581c4474ad22c7e5497b7e",
+         config: [
+            (name: "path", doc: "Absolute normalized destination path; the executing machine must trust its containing root.", ty: Path, required: true, example: Some("/srv/kyyn/report.bin")),
          ]),
     ],
 )
