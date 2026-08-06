@@ -9,6 +9,11 @@ interface file-replace {
         bytes: u64,
     }
 
+    record created {
+        resulting-sha256: string,
+        bytes: u64,
+    }
+
     record already-converged {
         resulting-sha256: string,
         bytes: u64,
@@ -19,10 +24,16 @@ interface file-replace {
         observed-sha256: string,
     }
 
+    record create-conflict {
+        observed-sha256: string,
+    }
+
     variant replace-outcome {
         applied(applied),
+        created(created),
         already-converged(already-converged),
         conflict(conflict),
+        create-conflict(create-conflict),
     }
 
     record host-failure {
@@ -33,11 +44,12 @@ interface file-replace {
         retryable: bool,
     }
 
-    /// Compare the host-bound existing regular file with `expected-current-sha256`
-    /// and atomically replace it with the exact accepted bytes. An invocation may
-    /// call this at most once; the host enforces the claim and target authority.
+    /// Compare the host-bound regular file with `expected-current-state` and
+    /// atomically create or replace it with the exact accepted bytes. State is
+    /// `absent` or a lowercase SHA-256. An invocation may call this at most once;
+    /// the host enforces the claim and target authority.
     replace: func(
-        expected-current-sha256: string,
+        expected-current-state: string,
         replacement: list<u8>,
     ) -> result<replace-outcome, host-failure>;
 }
