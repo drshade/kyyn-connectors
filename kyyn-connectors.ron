@@ -122,7 +122,7 @@
         (name: "file-replace", summary: "Atomically replace one owner-consented local file when its current digest matches.",
          world: "kyyn:sink@1", delivery: Convergent,
          component: "components/sinks/file-replace.wasm",
-         component_sha256: "3f2b81ef7ea14ad15cd28ca2aec6092ed746766944581c4474ad22c7e5497b7e",
+         component_sha256: "fad5fe1b832de6099c8e81a35ff6f3e124de440bd81004e6b2c7ca3849932619",
          config: [
             (name: "path", doc: "Absolute normalized destination path; the executing machine must trust its containing root.", ty: Path, required: true, example: Some("/srv/kyyn/report.bin")),
          ]),
