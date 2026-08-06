@@ -1,3 +1,8 @@
+#[cfg(any(all(target_arch = "wasm32", target_os = "unknown"), test))]
+fn credentials_were_rejected(error: Option<&str>) -> bool {
+    matches!(error, Some("invalid_grant" | "invalid_client"))
+}
+
 #[cfg(all(target_arch = "wasm32", target_os = "unknown"))]
 mod guest {
     mod bindings {
@@ -276,9 +281,21 @@ mod guest {
         ))
         .map_err(|error| error.message)?;
         let body = json(&response)?;
-        let token = body["access_token"]
-            .as_str()
-            .ok_or_else(|| format!("token refresh failed — sign in again ({body})"))?;
+        let token = match body["access_token"].as_str() {
+            Some(token) => token,
+            None => {
+                // A provider's terminal OAuth rejection proves that neither
+                // cached credential can authenticate this realm. Remove both
+                // so status becomes truthful and the owner is offered sign-in
+                // instead of an endless signed-in/fetch-failed loop. Preserve
+                // credentials for transient provider failures so retry works.
+                if super::credentials_were_rejected(body["error"].as_str()) {
+                    secrets::delete(ACCESS_TOKEN);
+                    secrets::delete(REFRESH_TOKEN);
+                }
+                return Err(format!("token refresh failed — sign in again ({body})"));
+            }
+        };
         secrets::put(ACCESS_TOKEN, token.as_bytes())
     }
 
@@ -374,4 +391,17 @@ mod guest {
     }
 
     bindings::export!(Salesforce with_types_in bindings);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::credentials_were_rejected;
+
+    #[test]
+    fn terminal_oauth_rejections_retire_cached_credentials() {
+        assert!(credentials_were_rejected(Some("invalid_grant")));
+        assert!(credentials_were_rejected(Some("invalid_client")));
+        assert!(!credentials_were_rejected(Some("temporarily_unavailable")));
+        assert!(!credentials_were_rejected(None));
+    }
 }
