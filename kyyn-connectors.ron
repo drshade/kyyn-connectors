@@ -119,12 +119,12 @@
          ]),
     ],
     sinks: [
-        (name: "file-replace", summary: "Atomically replace one owner-consented local file when its current digest matches.",
+        (name: "file-replace", summary: "Atomically create or replace one owner-consented local file when its reviewed state still matches.",
          world: "kyyn:sink@1", delivery: Convergent,
          component: "components/sinks/file-replace.wasm",
          component_sha256: "3fe7ab5d15809e80cc0c58474a3e90fd7d00a1be8237f6bcdc4a35b75dbf70d4",
          config: [
-            (name: "path", doc: "Absolute normalized destination path; the executing machine must trust its containing root.", ty: Path, required: true, example: Some("/srv/kyyn/report.bin")),
+            (name: "path", doc: "Absolute normalized destination path outside the KB and Kyyn state roots.", ty: Path, required: true, example: Some("/srv/kyyn/report.bin")),
          ]),
         (name: "git-ref", summary: "Compare-and-swap one owner-consented branch to one accepted preconstructed commit.",
          world: "kyyn:sink@1", delivery: CasConvergent,
