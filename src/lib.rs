@@ -291,7 +291,7 @@ mod contract {
             "wit/source.wit drifted from kyyn's frozen kyyn:source@1 contract"
         );
         const FROZEN_SINK_WIT_SHA256: &str =
-            "99302e9ac8eef35eaea84f91f20f8e7a93a3597ad8bdd2aad76c2a3beb1ef341";
+            "53a2a9982179b1757183281d1d76982dd2fe49d0df2b1f2cad2a6b97906d3c8e";
         assert_eq!(
             format!(
                 "{:x}",

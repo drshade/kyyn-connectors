@@ -39,8 +39,8 @@ mod guest {
 
     fn validate(effect: &Effect) -> Result<Config, String> {
         let config = config(&effect.config)?;
-        if !sha256(&effect.expected_target) {
-            return Err("expected-target must be lowercase SHA-256".into());
+        if effect.expected_target != "absent" && !sha256(&effect.expected_target) {
+            return Err("expected-target must be 'absent' or lowercase SHA-256".into());
         }
         if effect.payload_media_type.is_empty()
             || effect.payload_media_type.len() > 256
@@ -73,11 +73,18 @@ mod guest {
             let config = validate(&effect)?;
             Ok(EffectRendering {
                 destination: config.path,
-                summary: format!(
-                    "replace {} byte(s) if current SHA-256 is {}",
-                    effect.payload.len(),
-                    effect.expected_target
-                ),
+                summary: if effect.expected_target == "absent" {
+                    format!(
+                        "create {} byte(s) if the file remains absent",
+                        effect.payload.len()
+                    )
+                } else {
+                    format!(
+                        "replace {} byte(s) if current SHA-256 is {}",
+                        effect.payload.len(),
+                        effect.expected_target
+                    )
+                },
             })
         }
 
@@ -90,6 +97,10 @@ mod guest {
                     "applied {} -> {} ({} byte(s))",
                     observed.previous_sha256, observed.resulting_sha256, observed.bytes
                 ),
+                file_replace::ReplaceOutcome::Created(observed) => format!(
+                    "created {} ({} byte(s))",
+                    observed.resulting_sha256, observed.bytes
+                ),
                 file_replace::ReplaceOutcome::AlreadyConverged(observed) => format!(
                     "already converged at {} ({} byte(s))",
                     observed.resulting_sha256, observed.bytes
@@ -97,6 +108,10 @@ mod guest {
                 file_replace::ReplaceOutcome::Conflict(observed) => format!(
                     "conflict: expected {}, observed {}",
                     observed.expected_sha256, observed.observed_sha256
+                ),
+                file_replace::ReplaceOutcome::CreateConflict(observed) => format!(
+                    "conflict: expected absent, observed {}",
+                    observed.observed_sha256
                 ),
             };
             Ok(ApplyReport { note })
