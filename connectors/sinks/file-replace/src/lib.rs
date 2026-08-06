@@ -42,8 +42,12 @@ mod guest {
         if !sha256(&effect.expected_target) {
             return Err("expected-target must be lowercase SHA-256".into());
         }
-        if effect.payload_media_type != "application/octet-stream" {
-            return Err("file replacement payload must be application/octet-stream".into());
+        if effect.payload_media_type.is_empty()
+            || effect.payload_media_type.len() > 256
+            || !effect.payload_media_type.contains('/')
+            || effect.payload_media_type.chars().any(char::is_whitespace)
+        {
+            return Err("file replacement payload must have a bounded valid media type".into());
         }
         Ok(config)
     }
