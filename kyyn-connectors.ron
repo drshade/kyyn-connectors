@@ -1,7 +1,7 @@
 // First-party, digest-pinned, direction-distinct connectors. Every authority
 // grant belongs to one component; repository co-location grants no union.
-// SharePoint is intentionally not advertised until its dynamic pre-authorized
-// download path has an honest authority contract.
+// Provider-selected file downloads are explicit, bounded host continuations;
+// their bearer-like URLs never cross into connector memory.
 (
     connector_manifest: 1,
     sources: [
@@ -115,6 +115,29 @@
          config: [
             (name: "owner_addresses", doc: "Your own addresses (lowercased).", ty: StrList, example: Some("you@company.com")),
             (name: "client_id", doc: "Azure app id — leave empty for the shared multi-tenant kyyn app.", default: Some("53ddb21b-849f-45a3-8168-8a0e555f386f")),
+            (name: "tenant", doc: "Entra tenant GUID, or organizations.", default: Some("organizations")),
+         ]),
+        (name: "sharepoint-file", summary: "One read-only SharePoint file or recursively filtered folder as versioned evidence.",
+         world: "kyyn:source@1", namespace: "sharepoint",
+         capabilities: (requests: [
+            (purpose: Authenticate, authority: "https://login.microsoftonline.com", method: Post, path: "/{segment}/oauth2/v2.0/devicecode"),
+            (purpose: Authenticate, authority: "https://login.microsoftonline.com", method: Post, path: "/{segment}/oauth2/v2.0/token"),
+            (purpose: Observe, authority: "https://graph.microsoft.com", method: Get, path: "/v1.0/sites"),
+            (purpose: Observe, authority: "https://graph.microsoft.com", method: Get, path: "/v1.0/sites/{segment}/drives"),
+            (purpose: Observe, authority: "https://graph.microsoft.com", method: Get, path: "/v1.0/drives/{segment}/root/children"),
+            (purpose: Observe, authority: "https://graph.microsoft.com", method: Get, path: "/v1.0/drives/{segment}/items/{segment}/children"),
+            (purpose: Observe, authority: "https://graph.microsoft.com", method: Get, path: "/v1.0/drives/{segment}/items/{segment}/content", continuation: ProviderDownload),
+         ], auth: Some("ms-graph-files")),
+         component: "components/sources/sharepoint-file.wasm",
+         component_sha256: "ed6e40c4fa16910a03e6cafed92640e4b2c4959e78dfa0cd380bf7a042112dbe",
+         config: [
+            (name: "site", doc: "Canonical work/school SharePoint site URL under /sites/<name> or /teams/<name>.", required: true, example: Some("https://acme.sharepoint.com/sites/Finance")),
+            (name: "library", doc: "Exact document-library display name.", required: true, example: Some("Documents")),
+            (name: "path", doc: "Library-relative path of one file or folder.", required: true, example: Some("Reporting/FY2027")),
+            (name: "patterns", doc: "For a folder, globs relative to that folder; ** crosses levels.", ty: StrList, example: Some("**/*.xlsx"), default: Some("**/*")),
+            (name: "kind", doc: "The evidence kind each included file carries.", default: Some("file")),
+            (name: "max_file_bytes", doc: "Per-file size cap; larger files are reported and skipped.", ty: Int, default: Some("67108864")),
+            (name: "client_id", doc: "Azure app id — leave empty for the shared multi-tenant Kyyn app.", default: Some("53ddb21b-849f-45a3-8168-8a0e555f386f")),
             (name: "tenant", doc: "Entra tenant GUID, or organizations.", default: Some("organizations")),
          ]),
     ],

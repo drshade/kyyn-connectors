@@ -67,6 +67,8 @@ mod contract {
         authority: String,
         method: Method,
         path: String,
+        #[serde(default)]
+        continuation: Continuation,
     }
 
     #[derive(Deserialize)]
@@ -79,6 +81,13 @@ mod contract {
     enum Method {
         Get,
         Post,
+    }
+
+    #[derive(Default, Deserialize, PartialEq, Eq)]
+    enum Continuation {
+        #[default]
+        None,
+        ProviderDownload,
     }
 
     #[derive(Debug, Default, Deserialize, PartialEq, Eq)]
@@ -123,11 +132,7 @@ mod contract {
         let manifest = manifest();
         assert_eq!(manifest.connector_manifest, 1);
         assert_eq!(manifest.sinks.len(), 2, "two frozen initial sinks");
-        assert_eq!(
-            manifest.sources.len(),
-            8,
-            "the explicit SharePoint deferral is documented"
-        );
+        assert_eq!(manifest.sources.len(), 9, "nine first-party sources");
         let mut names = HashSet::new();
         for source in &manifest.sources {
             assert!(
@@ -177,6 +182,14 @@ mod contract {
                     Purpose::Observe => assert!(matches!(grant.method, Method::Get)),
                     Purpose::Authenticate => assert!(matches!(grant.method, Method::Post)),
                 }
+                if grant.continuation == Continuation::ProviderDownload {
+                    assert!(
+                        matches!(grant.purpose, Purpose::Observe)
+                            && matches!(grant.method, Method::Get),
+                        "{} provider download is not an Observe + GET",
+                        source.name
+                    );
+                }
                 if let Some(field) = grant.authority.strip_prefix("config:") {
                     assert!(
                         source.config.iter().any(|candidate| {
@@ -192,6 +205,27 @@ mod contract {
                 }
             }
         }
+
+        let sharepoint = manifest
+            .sources
+            .iter()
+            .find(|source| source.name == "sharepoint-file")
+            .expect("SharePoint source is advertised");
+        assert_eq!(
+            sharepoint.capabilities.auth.as_deref(),
+            Some("ms-graph-files"),
+            "files consent has a dedicated realm"
+        );
+        assert_eq!(
+            sharepoint
+                .capabilities
+                .requests
+                .iter()
+                .filter(|grant| grant.continuation == Continuation::ProviderDownload)
+                .count(),
+            1,
+            "only the exact content endpoint delegates its download location"
+        );
 
         for sink in &manifest.sinks {
             assert!(names.insert(&sink.name), "connector names are global");
