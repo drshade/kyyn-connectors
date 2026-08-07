@@ -1,8 +1,9 @@
 # kyyn-connectors
 
 The first-party [kyyn](https://github.com/drshade/kyyn) connector repository:
-the `sweep`, repository/pack, Salesforce, and Microsoft Graph source families,
-plus the authority-distinct `file-replace` and `git-ref` sinks.
+the `sweep`, repository/pack, Salesforce, Microsoft Graph, and read-only
+SharePoint file/folder source families, plus the authority-distinct
+`file-replace` and `git-ref` sinks.
 
 A connector repository is code a KB pins at an immutable commit in
 `connectors.ron`; configured source instances live separately in `sources.ron`.
@@ -21,9 +22,9 @@ explicit:
   component imports exactly its one host-owned write operation
   and has no ambient WASI authority.
 - `connectors/sources/` contains the capability-limited guest implementations.
-  The Microsoft family uses one shared Graph runtime for auth, bounded HTTP,
-  paging, normalization, and evidence construction, with tiny per-connector
-  entry crates selecting each fetch mode.
+  Mail, calendar, chat and meeting sources share Graph machinery. SharePoint
+  files use a dedicated read-only OAuth realm and a standalone guest so broad
+  communication scopes cannot bleed into file consent.
 - `components/sources/` and `components/sinks/` contain only direction-explicit
   executable artifacts consumers pin.
 - `crates/` contains reusable, execution-neutral connector logic consumed by
@@ -33,12 +34,13 @@ explicit:
 its bytes with the committed artifact. Use `--update` only for a deliberate,
 reviewed artifact change, then re-pin every changed digest in `kyyn-connectors.ron`.
 
-`sharepoint-file` remains implemented and reproducibly built but is not
-advertised in `kyyn-connectors.ron`: Graph returns a pre-authorized download URL
-with a dynamic origin/path, while `kyyn:source@1` intentionally accepts only an
-exact HTTPS origin and exact/fixed-depth path grants. It will return only under
-an explicitly reviewed authority contract; the old wildcard-host consent is
-not carried through the clean break.
+`sharepoint-file` accepts a canonical work/school site URL, document library,
+and library-relative file or folder path. It searches and exact-matches the
+site, walks stable drive/item identities through fixed-depth Graph grants, and
+asks only for read-only `Sites.Read.All` consent. File bytes use the exact
+`/content` evidence operation with an explicit provider-download continuation:
+Kyyn follows the short-lived preauthenticated URL without returning it or the
+Graph bearer token to the guest.
 
 There is deliberately no raw Kyyn-KB import connector. KB identity, schema and
 accept authority do not cross repositories; a future federation source may

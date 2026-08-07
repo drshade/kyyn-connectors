@@ -263,14 +263,10 @@ dependencies = [
 name = "kyyn-component-sharepoint-file"
 version = "0.1.0"
 dependencies = [
- "base64",
- "chrono",
  "glob",
- "kyyn-source-bundle",
  "ron",
  "serde",
  "serde_json",
- "sha2",
  "wit-bindgen",
 ]
 
