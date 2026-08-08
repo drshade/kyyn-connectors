@@ -19,7 +19,7 @@ mod guest {
     const ACCESS_TOKEN: &str = "ms-access-token";
     const REFRESH_TOKEN: &str = "ms-refresh-token";
     const DEFAULT_CLIENT_ID: &str = "53ddb21b-849f-45a3-8168-8a0e555f386f";
-    const SCOPES: &str = "Sites.Read.All offline_access openid profile";
+    const READ_SCOPES: &str = "Files.Read.All Sites.Read.All offline_access openid profile";
     const GRAPH_ORIGIN: &str = "https://graph.microsoft.com";
     const RESPONSE_CAP: u64 = 64 * 1024 * 1024;
     const MAX_PAGES: u32 = 500;
@@ -27,9 +27,11 @@ mod guest {
     #[derive(Deserialize)]
     #[serde(deny_unknown_fields)]
     struct Config {
-        site: String,
-        library: String,
-        path: String,
+        drive_id: String,
+        item_id: String,
+        item_kind: String,
+        display_name: String,
+        resolution: String,
         #[serde(default = "default_patterns")]
         patterns: Vec<String>,
         #[serde(default = "default_kind")]
@@ -40,27 +42,6 @@ mod guest {
         client_id: String,
         #[serde(default = "default_tenant")]
         tenant: String,
-    }
-
-    #[derive(Debug)]
-    struct SiteRef {
-        canonical: String,
-        search_name: String,
-    }
-
-    #[derive(Clone, Deserialize)]
-    #[serde(rename_all = "camelCase")]
-    struct Site {
-        id: String,
-        web_url: String,
-    }
-
-    #[derive(Clone, Deserialize)]
-    #[serde(rename_all = "camelCase")]
-    struct Drive {
-        id: String,
-        name: String,
-        drive_type: Option<String>,
     }
 
     #[derive(Clone, Deserialize)]
@@ -122,45 +103,11 @@ mod guest {
 
     fn parse_config(text: &str) -> Result<Config, String> {
         let value: ron::Value =
-            ron::from_str(text).map_err(|error| format!("SharePoint config: {error}"))?;
+            ron::from_str(text).map_err(|error| format!("Microsoft files config: {error}"))?;
         value.into_rust().map_err(|error| {
             format!(
-                "SharePoint config shape (site, library, path; optional patterns, kind, +                 max_file_bytes, client_id, tenant): {error}"
+                "Microsoft files config shape (drive_id, item_id, item_kind, display_name, resolution; optional patterns, kind, max_file_bytes, client_id, tenant): {error}"
             )
-        })
-    }
-
-    fn site_ref(raw: &str) -> Result<SiteRef, String> {
-        let rest = raw
-            .strip_prefix("https://")
-            .ok_or("site must be a canonical https:// SharePoint site URL")?;
-        if rest.contains(['?', '#', '@']) || rest.ends_with('/') {
-            return Err("site must have no credentials, query, fragment, or trailing slash".into());
-        }
-        let (host, path) = rest
-            .split_once('/')
-            .ok_or("site must name /sites/<name> or /teams/<name>")?;
-        if !host.ends_with(".sharepoint.com")
-            || host.is_empty()
-            || !host
-                .bytes()
-                .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'.'))
-        {
-            return Err("site host must be a canonical *.sharepoint.com hostname".into());
-        }
-        let parts: Vec<_> = path.split('/').collect();
-        if parts.len() != 2
-            || !matches!(parts[0], "sites" | "teams")
-            || parts[1].is_empty()
-            || !parts[1]
-                .bytes()
-                .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_'))
-        {
-            return Err("site must have the canonical shape /sites/<name> or /teams/<name>".into());
-        }
-        Ok(SiteRef {
-            canonical: format!("https://{host}/{}/{}", parts[0], parts[1]),
-            search_name: parts[1].into(),
         })
     }
 
@@ -182,10 +129,32 @@ mod guest {
     }
 
     fn validate(config: &Config) -> Result<(), String> {
-        let _site = site_ref(&config.site)?;
-        let _path = path_segments(&config.path)?;
-        if config.library.trim().is_empty() {
-            return Err("library must not be empty".into());
+        for (label, value) in [("drive_id", &config.drive_id), ("item_id", &config.item_id)] {
+            if value.is_empty()
+                || value.len() > 512
+                || value
+                    .chars()
+                    .any(|ch| ch.is_control() || matches!(ch, '/' | '?' | '#'))
+            {
+                return Err(format!(
+                    "{label} is not a valid canonical Microsoft identifier"
+                ));
+            }
+        }
+        if config.display_name.is_empty()
+            || config.display_name.len() > 512
+            || config.display_name.chars().any(char::is_control)
+        {
+            return Err("display_name is invalid".into());
+        }
+        if !matches!(config.item_kind.as_str(), "file" | "folder") {
+            return Err("item_kind must be 'file' or 'folder'".into());
+        }
+        if !matches!(
+            config.resolution.as_str(),
+            "read-only" | "metadata-read-write"
+        ) {
+            return Err("resolution must be 'read-only' or 'metadata-read-write'".into());
         }
         if config.client_id.trim().is_empty() {
             return Err("client_id must not be empty".into());
@@ -244,6 +213,20 @@ mod guest {
         )
     }
 
+    fn scopes(config: &Config) -> &'static str {
+        match config.resolution.as_str() {
+            "metadata-read-write" => "Files.ReadWrite offline_access",
+            _ => READ_SCOPES,
+        }
+    }
+
+    fn realm_prefix(config: &Config) -> &'static str {
+        match config.resolution.as_str() {
+            "metadata-read-write" => "ms-files-resolve",
+            _ => "ms-files-read",
+        }
+    }
+
     fn request(
         purpose: Purpose,
         method: Method,
@@ -298,7 +281,7 @@ mod guest {
                 ("grant_type", "refresh_token"),
                 ("client_id", &config.client_id),
                 ("refresh_token", refresh),
-                ("scope", SCOPES),
+                ("scope", scopes(config)),
             ])),
             None,
             RESPONSE_CAP,
@@ -342,7 +325,7 @@ mod guest {
             }
             if response.status == 401 {
                 secrets::delete(ACCESS_TOKEN);
-                return Err("SharePoint token was rejected — sign in again".into());
+                return Err("Microsoft files token was rejected — sign in again".into());
             }
             if response.status == 429 && attempt < 5 {
                 let retry_after = response
@@ -403,84 +386,17 @@ mod guest {
         Ok(records)
     }
 
-    fn resolve_site(
-        config: &Config,
-        expected: &SiteRef,
-        refreshed: &mut bool,
-    ) -> Result<Site, String> {
-        let url = format!(
-            "{GRAPH_ORIGIN}/v1.0/sites?search={}",
-            percent_encode(&expected.search_name)
-        );
-        let mut matches = graph_pages(config, url, refreshed)?
-            .into_iter()
-            .map(serde_json::from_value::<Site>)
-            .collect::<Result<Vec<_>, _>>()
-            .map_err(|error| format!("site result shape: {error}"))?
-            .into_iter()
-            .filter(|site| {
-                site.web_url
-                    .trim_end_matches('/')
-                    .eq_ignore_ascii_case(&expected.canonical)
-            })
-            .collect::<Vec<_>>();
-        if matches.len() != 1 {
-            return Err(format!(
-                "site search must resolve '{}' exactly once; found {} exact matches",
-                expected.canonical,
-                matches.len()
-            ));
-        }
-        Ok(matches.remove(0))
-    }
-
-    fn resolve_drive(
-        config: &Config,
-        site: &Site,
-        library: &str,
-        refreshed: &mut bool,
-    ) -> Result<Drive, String> {
-        let url = format!(
-            "{GRAPH_ORIGIN}/v1.0/sites/{}/drives",
-            percent_encode(&site.id)
-        );
-        let mut matches = graph_pages(config, url, refreshed)?
-            .into_iter()
-            .map(serde_json::from_value::<Drive>)
-            .collect::<Result<Vec<_>, _>>()
-            .map_err(|error| format!("document library shape: {error}"))?
-            .into_iter()
-            .filter(|drive| {
-                drive.name.eq_ignore_ascii_case(library)
-                    && drive.drive_type.as_deref() != Some("personal")
-            })
-            .collect::<Vec<_>>();
-        if matches.len() != 1 {
-            return Err(format!(
-                "document library '{library}' must resolve exactly once; found {} matches",
-                matches.len()
-            ));
-        }
-        Ok(matches.remove(0))
-    }
-
     fn children(
         config: &Config,
         drive_id: &str,
-        parent_id: Option<&str>,
+        parent_id: &str,
         refreshed: &mut bool,
     ) -> Result<Vec<DriveItem>, String> {
-        let url = match parent_id {
-            Some(parent_id) => format!(
-                "{GRAPH_ORIGIN}/v1.0/drives/{}/items/{}/children",
-                percent_encode(drive_id),
-                percent_encode(parent_id)
-            ),
-            None => format!(
-                "{GRAPH_ORIGIN}/v1.0/drives/{}/root/children",
-                percent_encode(drive_id)
-            ),
-        };
+        let url = format!(
+            "{GRAPH_ORIGIN}/v1.0/drives/{}/items/{}/children",
+            percent_encode(drive_id),
+            percent_encode(parent_id)
+        );
         let mut children = graph_pages(config, url, refreshed)?
             .into_iter()
             .map(serde_json::from_value::<DriveItem>)
@@ -490,33 +406,14 @@ mod guest {
         Ok(children)
     }
 
-    fn resolve_target(
-        config: &Config,
-        drive_id: &str,
-        segments: &[String],
-        refreshed: &mut bool,
-    ) -> Result<DriveItem, String> {
-        let mut parent = None;
-        let mut target = None;
-        for (index, segment) in segments.iter().enumerate() {
-            let mut matches = children(config, drive_id, parent.as_deref(), refreshed)?
-                .into_iter()
-                .filter(|item| item.name.eq_ignore_ascii_case(segment))
-                .collect::<Vec<_>>();
-            if matches.len() != 1 {
-                return Err(format!(
-                    "path segment '{segment}' must resolve exactly once; found {} matches",
-                    matches.len()
-                ));
-            }
-            let item = matches.remove(0);
-            if index + 1 != segments.len() && item.folder.is_none() {
-                return Err(format!("path segment '{segment}' is not a folder"));
-            }
-            parent = Some(item.id.clone());
-            target = Some(item);
-        }
-        target.ok_or_else(|| "path must identify a file or folder".into())
+    fn target_item(config: &Config, refreshed: &mut bool) -> Result<DriveItem, String> {
+        let url = format!(
+            "{GRAPH_ORIGIN}/v1.0/drives/{}/items/{}",
+            percent_encode(&config.drive_id),
+            percent_encode(&config.item_id)
+        );
+        let body = json(&graph_get(config, &url, refreshed)?)?;
+        serde_json::from_value(body).map_err(|error| format!("Microsoft drive item shape: {error}"))
     }
 
     fn safe_relative(path: &str) -> Result<(), String> {
@@ -547,7 +444,7 @@ mod guest {
         let mut files = Vec::new();
         let mut notes = Vec::new();
         while let Some((parent_id, folder_relative)) = stack.pop() {
-            for item in children(config, drive_id, Some(&parent_id), refreshed)? {
+            for item in children(config, drive_id, &parent_id, refreshed)? {
                 let relative = if folder_relative.is_empty() {
                     item.name.clone()
                 } else {
@@ -601,11 +498,11 @@ mod guest {
             http::fetch_to_evidence(&request, evidence_path).map_err(|error| error.message)?;
         if status == 401 {
             secrets::delete(ACCESS_TOKEN);
-            return Err("SharePoint content authorization expired — sign in again".into());
+            return Err("Microsoft file content authorization expired — sign in again".into());
         }
         if !(200..300).contains(&status) {
             return Err(format!(
-                "SharePoint content download failed (HTTP {status}) for '{evidence_path}'"
+                "Microsoft file content download failed (HTTP {status}) for '{evidence_path}'"
             ));
         }
         Ok(stored)
@@ -684,7 +581,11 @@ mod guest {
             content_hash: stored.sha256,
             files: vec![library_path.clone()],
             file_hashes: Vec::new(),
-            locator: Some(format!("{}#{}", config.site, library_path)),
+            locator: Some(format!(
+                "microsoft-file:{}/{}",
+                percent_encode(&config.drive_id),
+                percent_encode(&item.id)
+            )),
             meta: format!(
                 "{library_path} · {} bytes · modified {}",
                 stored.bytes,
@@ -694,36 +595,55 @@ mod guest {
         Ok(())
     }
 
-    fn fetch_sharepoint(
+    fn fetch_microsoft_files(
         config: &Config,
         checkpoint: Option<String>,
     ) -> Result<FetchResult, String> {
         if secrets::get(ACCESS_TOKEN).is_none() {
-            return Err("no SharePoint files token — sign this source in first".into());
+            return Err("no Microsoft files token — sign this source in first".into());
         }
-        let site_ref = site_ref(&config.site)?;
-        let segments = path_segments(&config.path)?;
         let previous: Checkpoint = match checkpoint.as_deref() {
             Some(checkpoint) => ron::from_str(checkpoint)
-                .map_err(|error| format!("parsing SharePoint checkpoint: {error}"))?,
+                .map_err(|error| format!("parsing Microsoft files checkpoint: {error}"))?,
             None => Checkpoint::default(),
         };
         let mut refreshed = false;
-        let site = resolve_site(config, &site_ref, &mut refreshed)?;
-        let drive = resolve_drive(config, &site, &config.library, &mut refreshed)?;
-        let target = resolve_target(config, &drive.id, &segments, &mut refreshed)?;
+        let target = target_item(config, &mut refreshed)?;
+        if target.id != config.item_id {
+            return Err("Microsoft returned a different item identity".into());
+        }
+        let actual_kind = if target.folder.is_some() {
+            "folder"
+        } else if target.file.is_some() && target.package.is_none() && target.remote_item.is_none()
+        {
+            "file"
+        } else {
+            return Err("configured identity is not a supported regular file or folder".into());
+        };
+        if actual_kind != config.item_kind {
+            return Err(format!(
+                "Microsoft item kind changed: accepted {}, observed {actual_kind}",
+                config.item_kind
+            ));
+        }
 
         let mut notes = Vec::new();
         let files = if target.folder.is_some() {
-            let (files, folder_notes) =
-                folder_files(config, &drive.id, &target, &config.path, &mut refreshed)?;
+            let (files, folder_notes) = folder_files(
+                config,
+                &config.drive_id,
+                &target,
+                &target.name,
+                &mut refreshed,
+            )?;
             notes.extend(folder_notes);
             files
         } else if target.file.is_some() && target.package.is_none() && target.remote_item.is_none()
         {
-            vec![(target, config.path.clone())]
+            let name = target.name.clone();
+            vec![(target, name)]
         } else {
-            return Err("configured path is not a supported regular file or folder".into());
+            return Err("configured identity is not a supported regular file or folder".into());
         };
 
         let mut accumulator = Accumulator {
@@ -733,11 +653,11 @@ mod guest {
         };
         let mut seen = BTreeSet::new();
         for (item, library_path) in files {
-            let key = format!("{}:{}", drive.id, item.id);
+            let key = format!("{}:{}", config.drive_id, item.id);
             seen.insert(key.clone());
             process_file(
                 config,
-                &drive.id,
+                &config.drive_id,
                 item,
                 library_path,
                 previous.items.get(&key),
@@ -778,15 +698,15 @@ mod guest {
         })
     }
 
-    struct SharePointFile;
+    struct MicrosoftFiles;
 
-    impl Guest for SharePointFile {
+    impl Guest for MicrosoftFiles {
         fn describe() -> ConnectorDescribe {
             ConnectorDescribe {
-                name: "sharepoint-file".into(),
-                link_namespace: "sharepoint".into(),
+                name: "microsoft-files".into(),
+                link_namespace: "microsoft-file".into(),
                 fetch_style: FetchStyle::Snapshot,
-                auth_realm: Some("ms-graph-files".into()),
+                auth_realm: Some("ms-files-read".into()),
             }
         }
 
@@ -798,19 +718,21 @@ mod guest {
             let config = parse_config(&config)?;
             validate(&config)?;
             Ok(Some(format!(
-                "ms-graph-files:{}:{}",
-                config.tenant, config.client_id
+                "{}:{}:{}",
+                realm_prefix(&config),
+                config.tenant,
+                config.client_id
             )))
         }
 
         fn status(_config: String) -> Result<AuthStatus, String> {
             if secrets::get(ACCESS_TOKEN).is_some() {
                 Ok(AuthStatus::Authenticated(
-                    "read-only SharePoint token cached (verified on fetch)".into(),
+                    "Microsoft files token cached (verified on fetch)".into(),
                 ))
             } else {
                 Ok(AuthStatus::NotAuthenticated(
-                    "no read-only SharePoint token — sign in first".into(),
+                    "no Microsoft files token — sign in first".into(),
                 ))
             }
         }
@@ -822,7 +744,10 @@ mod guest {
                 Purpose::Authenticate,
                 Method::Post,
                 identity_url(&config, "devicecode"),
-                Some(form(&[("client_id", &config.client_id), ("scope", SCOPES)])),
+                Some(form(&[
+                    ("client_id", &config.client_id),
+                    ("scope", scopes(&config)),
+                ])),
                 None,
                 RESPONSE_CAP,
             ))
@@ -863,7 +788,7 @@ mod guest {
                     .ok_or("no refresh_token returned — offline_access is required")?;
                 secrets::put(REFRESH_TOKEN, refresh.as_bytes())?;
                 return Ok(AuthPollResult::Done(
-                    "signed in with read-only files access".into(),
+                    "signed in with Microsoft files access".into(),
                 ));
             }
             match body["error"].as_str() {
@@ -880,11 +805,11 @@ mod guest {
             let config = parse_config(&request.config)?;
             validate(&config)?;
             if !matches!(request.spec, RunSpec::Snapshot) {
-                return Err("sharepoint-file is a snapshot source".into());
+                return Err("microsoft-files is a snapshot source".into());
             }
-            fetch_sharepoint(&config, request.checkpoint)
+            fetch_microsoft_files(&config, request.checkpoint)
         }
     }
 
-    bindings::export!(SharePointFile with_types_in bindings);
+    bindings::export!(MicrosoftFiles with_types_in bindings);
 }

@@ -249,6 +249,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "kyyn-component-microsoft-files"
+version = "0.1.0"
+dependencies = [
+ "glob",
+ "ron",
+ "serde",
+ "serde_json",
+ "wit-bindgen",
+]
+
+[[package]]
 name = "kyyn-component-pack"
 version = "0.1.0"
 dependencies = [
@@ -262,17 +273,6 @@ name = "kyyn-component-salesforce"
 version = "0.1.0"
 dependencies = [
  "kyyn-source-bundle",
- "ron",
- "serde",
- "serde_json",
- "wit-bindgen",
-]
-
-[[package]]
-name = "kyyn-component-sharepoint-file"
-version = "0.1.0"
-dependencies = [
- "glob",
  "ron",
  "serde",
  "serde_json",

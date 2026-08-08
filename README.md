@@ -34,10 +34,10 @@ explicit:
 its bytes with the committed artifact. Use `--update` only for a deliberate,
 reviewed artifact change, then re-pin every changed digest in `kyyn-connectors.ron`.
 
-`sharepoint-file` accepts a canonical work/school site URL, document library,
-and library-relative file or folder path. It searches and exact-matches the
-site, walks stable drive/item identities through fixed-depth Graph grants, and
-asks only for read-only `Sites.Read.All` consent. File bytes use the exact
+`microsoft-files` accepts canonical SharePoint/OneDrive drive and item identity
+expanded by Kyyn from an owner-resolved browser-link candidate. It observes
+that exact file or recursively filters that exact folder through fixed-depth
+GET-only Graph grants. File bytes use the exact
 `/content` evidence operation with an explicit provider-download continuation:
 Kyyn follows the short-lived preauthenticated URL without returning it or the
 Graph bearer token to the guest.
