@@ -206,18 +206,18 @@ mod contract {
             }
         }
 
-        let sharepoint = manifest
+        let microsoft_files = manifest
             .sources
             .iter()
-            .find(|source| source.name == "sharepoint-file")
-            .expect("SharePoint source is advertised");
+            .find(|source| source.name == "microsoft-files")
+            .expect("Microsoft files source is advertised");
         assert_eq!(
-            sharepoint.capabilities.auth.as_deref(),
-            Some("ms-graph-files"),
+            microsoft_files.capabilities.auth.as_deref(),
+            Some("ms-files-read"),
             "files consent has a dedicated realm"
         );
         assert_eq!(
-            sharepoint
+            microsoft_files
                 .capabilities
                 .requests
                 .iter()

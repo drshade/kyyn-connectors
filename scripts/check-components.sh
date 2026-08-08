@@ -47,7 +47,7 @@ else
 fi
 flock -u 9
 
-source_guests="sweep git-repo pack salesforce graph-calendar graph-mail graph-chats graph-meetings sharepoint-file"
+source_guests="sweep git-repo pack salesforce graph-calendar graph-mail graph-chats graph-meetings microsoft-files"
 sink_guests="file-replace git-ref microsoft-file-replace"
 source_packages=""
 sink_packages=""

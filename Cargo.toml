@@ -26,7 +26,7 @@ members = [
     "connectors/sources/git-repo",
     "connectors/sources/pack",
     "connectors/sources/salesforce",
-    "connectors/sources/sharepoint-file",
+    "connectors/sources/microsoft-files",
     "connectors/sources/sweep",
     "crates/kyyn-source-bundle",
     "tools/connector-componentize",
