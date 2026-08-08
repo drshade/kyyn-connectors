@@ -131,7 +131,7 @@ mod contract {
     fn manifest_is_direction_explicit_closed_and_reviewable() {
         let manifest = manifest();
         assert_eq!(manifest.connector_manifest, 1);
-        assert_eq!(manifest.sinks.len(), 2, "two frozen initial sinks");
+        assert_eq!(manifest.sinks.len(), 3, "three first-party sinks");
         assert_eq!(manifest.sources.len(), 9, "nine first-party sources");
         let mut names = HashSet::new();
         for source in &manifest.sources {
@@ -283,6 +283,20 @@ mod contract {
         assert_eq!(git.config[0].name, "repository");
         assert_eq!(git.config[1].name, "reference");
         assert!(git.config.iter().all(|field| field.required));
+
+        let microsoft = manifest
+            .sinks
+            .iter()
+            .find(|sink| sink.name == "microsoft-file-replace")
+            .expect("microsoft-file-replace sink");
+        assert!(matches!(microsoft.delivery, SinkDelivery::Convergent));
+        assert_eq!(
+            microsoft.component,
+            "components/sinks/microsoft-file-replace.wasm"
+        );
+        assert_eq!(microsoft.config.len(), 1);
+        assert_eq!(microsoft.config[0].name, "candidate");
+        assert!(microsoft.config[0].required);
     }
 
     #[test]
@@ -325,7 +339,7 @@ mod contract {
             "wit/source.wit drifted from kyyn's frozen kyyn:source@1 contract"
         );
         const FROZEN_SINK_WIT_SHA256: &str =
-            "53a2a9982179b1757183281d1d76982dd2fe49d0df2b1f2cad2a6b97906d3c8e";
+            "0e70eda60f3bb3834a5ce18144dd56bd66480f8ed8681624fd5b49b84c788968";
         assert_eq!(
             format!(
                 "{:x}",

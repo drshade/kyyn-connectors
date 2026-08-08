@@ -3,7 +3,7 @@
 The first-party [kyyn](https://github.com/drshade/kyyn) connector repository:
 the `sweep`, repository/pack, Salesforce, Microsoft Graph, and read-only
 SharePoint file/folder source families, plus the authority-distinct
-`file-replace` and `git-ref` sinks.
+`file-replace`, `git-ref`, and `microsoft-file-replace` sinks.
 
 A connector repository is code a KB pins at an immutable commit in
 `connectors.ron`; configured source instances live separately in `sources.ron`.
@@ -41,6 +41,12 @@ asks only for read-only `Sites.Read.All` consent. File bytes use the exact
 `/content` evidence operation with an explicit provider-download continuation:
 Kyyn follows the short-lived preauthenticated URL without returning it or the
 Graph bearer token to the guest.
+
+`microsoft-file-replace` creates or replaces one owner-resolved SharePoint or
+OneDrive file. Its guest receives only destination display text, the reviewed
+expected state, and exact replacement bytes; canonical identity, Graph
+transport, conditional-write headers, and the sink-only write credential stay
+inside the Kyyn host.
 
 There is deliberately no raw Kyyn-KB import connector. KB identity, schema and
 accept authority do not cross repositories; a future federation source may

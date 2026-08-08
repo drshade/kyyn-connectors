@@ -97,6 +97,75 @@ interface git-ref {
     ) -> result<transition-outcome, host-failure>;
 }
 
+/// One host-bound Microsoft file creation/replacement. Drive, item, parent,
+/// filename, realm, Graph URLs and credentials are deliberately absent.
+interface microsoft-file-replace {
+    record present-state {
+        item-id: string,
+        etag: string,
+        sha256: string,
+        bytes: u64,
+    }
+
+    variant expected-state {
+        absent,
+        present(present-state),
+    }
+
+    record applied {
+        previous-sha256: string,
+        resulting-sha256: string,
+        item-id: string,
+        etag: string,
+        bytes: u64,
+    }
+
+    record created {
+        resulting-sha256: string,
+        item-id: string,
+        etag: string,
+        bytes: u64,
+    }
+
+    record already-converged {
+        resulting-sha256: string,
+        item-id: string,
+        etag: string,
+        bytes: u64,
+    }
+
+    record conflict {
+        expected-sha256: string,
+        observed-sha256: option<string>,
+    }
+
+    record create-conflict {
+        observed-sha256: string,
+    }
+
+    variant replace-outcome {
+        applied(applied),
+        created(created),
+        already-converged(already-converged),
+        conflict(conflict),
+        create-conflict(create-conflict),
+    }
+
+    record host-failure {
+        code: string,
+        message: string,
+        retryable: bool,
+    }
+
+    /// Compare the host-bound logical Microsoft file with the reviewed state,
+    /// upload at most once, then confirm the resulting bytes. The host also
+    /// binds this claim and replacement to the accepted effect envelope.
+    replace: func(
+        expected: expected-state,
+        replacement: list<u8>,
+    ) -> result<replace-outcome, host-failure>;
+}
+
 /// Direction-distinct sink behaviour. These exports carry no authority by
 /// themselves. Validation and rendering execute with all write handlers
 /// disabled; apply receives only the imports earned by accepted consent.
@@ -153,10 +222,17 @@ world git-ref-sink {
     export api;
 }
 
+/// Direction- and effect-distinct Microsoft publication guest.
+world microsoft-file-sink {
+    import microsoft-file-replace;
+    export api;
+}
+
 /// Host union used by the engine to instantiate effect-distinct components.
 /// Each component's actual import set remains its exact effect signature.
 world host-sink {
     import file-replace;
     import git-ref;
+    import microsoft-file-replace;
     export api;
 }
