@@ -41,7 +41,7 @@ its bytes with the committed artifact. Use `--update` only for a deliberate,
 reviewed artifact change, then re-pin every changed digest in `kyyn-connectors.ron`.
 
 `microsoft-files` accepts canonical SharePoint/OneDrive drive and item identity
-expanded by Kyyn from an owner-resolved browser-link candidate. It observes
+resolved inline by Kyyn from an owner-submitted ephemeral browser link. It observes
 that exact file or recursively filters that exact folder through fixed-depth
 GET-only Graph grants. File bytes use the exact
 `/content` evidence operation with an explicit provider-download continuation:
