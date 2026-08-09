@@ -95,6 +95,7 @@ mod contract {
     #[serde(deny_unknown_fields)]
     struct RequestGrant {
         purpose: Purpose,
+        authorization: Authorization,
         authority: String,
         method: Method,
         path: String,
@@ -106,6 +107,12 @@ mod contract {
     enum Purpose {
         Observe,
         Authenticate,
+    }
+
+    #[derive(Deserialize)]
+    enum Authorization {
+        None,
+        Connection,
     }
 
     #[derive(Deserialize)]
@@ -227,6 +234,7 @@ mod contract {
             }
             for grant in &connection.requests {
                 assert!(matches!(grant.purpose, Purpose::Authenticate));
+                assert!(matches!(grant.authorization, Authorization::None));
                 assert!(matches!(grant.method, Method::Post));
                 assert!(grant.path.starts_with('/'));
                 assert_eq!(grant.continuation, Continuation::None);
@@ -367,6 +375,13 @@ mod contract {
                     Purpose::Observe => assert!(matches!(grant.method, Method::Get)),
                     Purpose::Authenticate => assert!(matches!(grant.method, Method::Post)),
                 }
+                if matches!(grant.authorization, Authorization::Connection) {
+                    assert!(
+                        source.connection.is_some(),
+                        "{} authorizes a connection without requiring one",
+                        source.name
+                    );
+                }
                 if grant.continuation == Continuation::ProviderDownload {
                     assert!(
                         matches!(grant.purpose, Purpose::Observe)
@@ -385,6 +400,7 @@ mod contract {
                         field
                     );
                 } else if let Some(field) = grant.authority.strip_prefix("connection:") {
+                    assert!(matches!(grant.authorization, Authorization::Connection));
                     let requirement = source.connection.as_ref().expect("connection authority");
                     let provider = manifest
                         .connections
