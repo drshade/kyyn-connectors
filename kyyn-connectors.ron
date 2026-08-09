@@ -26,7 +26,7 @@
         (name: "salesforce", summary: "A reusable Salesforce org connection enrolled through Connected App device flow.",
          world: "kyyn:connection@1",
          component: "components/connections/salesforce-connection.wasm",
-         component_sha256: "fc9263900d05f27784d1c7d512670a2e61678ee46a4f03ac4c4fae08ba734d24",
+         component_sha256: "e448416612abd2c8df19a9cf770161c687ac9b7535e285f9fa6e95da4bd07789",
          capabilities: ["api"],
          requests: [
             (purpose: Authenticate, authority: "config:instance_url", method: Post, path: "/services/oauth2/token"),
@@ -80,7 +80,7 @@
             (purpose: Observe, authority: "connection:instance_url", method: Get, path: "/services/data/{segment}/query/{segment}"),
          ]),
          component: "components/sources/salesforce.wasm",
-         component_sha256: "98fceee8123d9ffc48605b20b553464f60c8578bb2a8f1a83eadeabdc82b3dac",
+         component_sha256: "4cae0becaf593fb92c918ae2c681563bda600d8d7f628dc84a01d6caea57fe6c",
          config: [
             (name: "query", doc: "The SOQL query whose records this source ingests.", required: true, example: Some("SELECT Id, Name, StageName FROM Opportunity")),
             (name: "kind", doc: "The item kind records carry.", default: Some("sf-record")),
