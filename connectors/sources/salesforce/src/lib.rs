@@ -1,8 +1,3 @@
-#[cfg(any(all(target_arch = "wasm32", target_os = "unknown"), test))]
-fn credentials_were_rejected(error: Option<&str>) -> bool {
-    matches!(error, Some("invalid_grant" | "invalid_client"))
-}
-
 #[cfg(all(target_arch = "wasm32", target_os = "unknown"))]
 mod guest {
     mod bindings {
@@ -17,18 +12,14 @@ mod guest {
         FetchStyle, Guest, Item, RunSpec,
     };
     use bindings::kyyn::source::http::{self, Method, Purpose, Request, Response};
-    use bindings::kyyn::source::{control, evidence, secrets};
+    use bindings::kyyn::source::{control, evidence};
     use serde::Deserialize;
 
-    const ACCESS_TOKEN: &str = "sf-access-token";
-    const REFRESH_TOKEN: &str = "sf-refresh-token";
     const RESPONSE_CAP: u64 = 64 * 1024 * 1024;
 
     #[derive(Deserialize)]
     #[serde(deny_unknown_fields)]
     struct Config {
-        instance_url: String,
-        client_id: String,
         query: String,
         #[serde(default = "default_kind")]
         kind: String,
@@ -36,6 +27,14 @@ mod guest {
         api_version: String,
         #[serde(default = "default_id_field")]
         id_field: String,
+    }
+
+    #[derive(Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct ConnectionConfig {
+        instance_url: String,
+        #[serde(rename = "client_id")]
+        _client_id: String,
     }
 
     fn default_kind() -> String {
@@ -55,27 +54,13 @@ mod guest {
             ron::from_str(text).map_err(|error| format!("salesforce config: {error}"))?;
         value.into_rust().map_err(|error| {
             format!(
-                "salesforce config shape (instance_url, client_id, query; optional kind, \
+                "salesforce config shape (query; optional kind, \
                  api_version, id_field): {error}"
             )
         })
     }
 
-    fn host_of(url: &str) -> String {
-        url.trim_start_matches("https://")
-            .split('/')
-            .next()
-            .unwrap_or("salesforce")
-            .into()
-    }
-
     fn validate(config: &Config) -> Result<(), String> {
-        if !config.instance_url.starts_with("https://") {
-            return Err("instance_url must be an https:// URL (the org's My Domain)".into());
-        }
-        if config.client_id.trim().is_empty() {
-            return Err("client_id (the Connected App's consumer key) is required".into());
-        }
         if !config
             .query
             .trim()
@@ -106,15 +91,6 @@ mod guest {
             }
         }
         encoded
-    }
-
-    fn form(fields: &[(&str, &str)]) -> Vec<u8> {
-        fields
-            .iter()
-            .map(|(name, value)| format!("{}={}", percent_encode(name), percent_encode(value)))
-            .collect::<Vec<_>>()
-            .join("&")
-            .into_bytes()
     }
 
     fn request(
@@ -151,10 +127,6 @@ mod guest {
         })
     }
 
-    fn token_url(config: &Config) -> String {
-        format!("{}/services/oauth2/token", config.instance_url)
-    }
-
     struct Salesforce;
 
     impl Guest for Salesforce {
@@ -163,7 +135,7 @@ mod guest {
                 name: "salesforce".into(),
                 link_namespace: "sf".into(),
                 fetch_style: FetchStyle::Snapshot,
-                auth_realm: Some("salesforce".into()),
+                auth_realm: None,
             }
         }
 
@@ -171,86 +143,20 @@ mod guest {
             validate(&parse_config(&config)?)
         }
 
-        fn config_auth_realm(config: String) -> Result<Option<String>, String> {
-            let config = parse_config(&config)?;
-            Ok(Some(format!(
-                "salesforce:{}:{}",
-                host_of(&config.instance_url),
-                config.client_id
-            )))
+        fn config_auth_realm(_config: String) -> Result<Option<String>, String> {
+            Ok(None)
         }
 
         fn status(_config: String) -> Result<AuthStatus, String> {
-            if secrets::get(ACCESS_TOKEN).is_some() {
-                Ok(AuthStatus::Authenticated(
-                    "token cached (verified on fetch)".into(),
-                ))
-            } else {
-                Ok(AuthStatus::NotAuthenticated(
-                    "no token — sign the realm in first".into(),
-                ))
-            }
+            Ok(AuthStatus::NotRequired)
         }
 
-        fn auth_begin(config: String) -> Result<AuthChallenge, String> {
-            let config = parse_config(&config)?;
-            validate(&config)?;
-            let response = http::fetch(&request(
-                Purpose::Authenticate,
-                Method::Post,
-                token_url(&config),
-                Some(form(&[
-                    ("response_type", "device_code"),
-                    ("client_id", &config.client_id),
-                    ("scope", "api refresh_token"),
-                ])),
-                None,
-            ))
-            .map_err(|error| error.message)?;
-            let body = json(&response)?;
-            let field = |name: &str| body[name].as_str().map(str::to_string);
-            Ok(AuthChallenge {
-                verification_url: field("verification_uri")
-                    .ok_or_else(|| format!("device flow refused: {body}"))?,
-                user_code: field("user_code").ok_or("no user_code")?,
-                expires_in_secs: body["expires_in"].as_u64().unwrap_or(600),
-                handle: field("device_code").ok_or("no device_code")?,
-            })
+        fn auth_begin(_config: String) -> Result<AuthChallenge, String> {
+            Err("authentication belongs to the selected named connection".into())
         }
 
-        fn auth_poll(config: String, handle: String) -> Result<AuthPollResult, String> {
-            let config = parse_config(&config)?;
-            let response = http::fetch(&request(
-                Purpose::Authenticate,
-                Method::Post,
-                token_url(&config),
-                Some(form(&[
-                    ("grant_type", "device"),
-                    ("client_id", &config.client_id),
-                    ("code", &handle),
-                ])),
-                None,
-            ))
-            .map_err(|error| error.message)?;
-            let body = json(&response)?;
-            if let Some(token) = body["access_token"].as_str() {
-                secrets::put(ACCESS_TOKEN, token.as_bytes())?;
-                if let Some(refresh) = body["refresh_token"].as_str() {
-                    secrets::put(REFRESH_TOKEN, refresh.as_bytes())?;
-                }
-                return Ok(AuthPollResult::Done("signed in".into()));
-            }
-            match body["error"].as_str() {
-                Some("authorization_pending") | Some("slow_down") => Ok(AuthPollResult::Pending),
-                Some(error) => Ok(AuthPollResult::Failed(format!(
-                    "{error}: {}",
-                    body["error_description"].as_str().unwrap_or("")
-                ))),
-                None => Ok(AuthPollResult::Failed(format!(
-                    "unexpected reply (HTTP {}): {body}",
-                    response.status
-                ))),
-            }
+        fn auth_poll(_config: String, _handle: String) -> Result<AuthPollResult, String> {
+            Err("authentication belongs to the selected named connection".into())
         }
 
         fn fetch(request: FetchRequest) -> Result<FetchResult, String> {
@@ -259,59 +165,29 @@ mod guest {
             }
             let config = parse_config(&request.config)?;
             validate(&config)?;
-            run_query(&config)
-        }
-    }
-
-    fn refresh(config: &Config) -> Result<(), String> {
-        let refresh = secrets::get(REFRESH_TOKEN)
-            .ok_or("token expired and no refresh token — sign in again")?;
-        let refresh =
-            std::str::from_utf8(&refresh).map_err(|_| "stored refresh token is not UTF-8")?;
-        let response = http::fetch(&request(
-            Purpose::Authenticate,
-            Method::Post,
-            token_url(config),
-            Some(form(&[
-                ("grant_type", "refresh_token"),
-                ("client_id", &config.client_id),
-                ("refresh_token", refresh),
-            ])),
-            None,
-        ))
-        .map_err(|error| error.message)?;
-        let body = json(&response)?;
-        let token = match body["access_token"].as_str() {
-            Some(token) => token,
-            None => {
-                // A provider's terminal OAuth rejection proves that neither
-                // cached credential can authenticate this realm. Remove both
-                // so status becomes truthful and the owner is offered sign-in
-                // instead of an endless signed-in/fetch-failed loop. Preserve
-                // credentials for transient provider failures so retry works.
-                if super::credentials_were_rejected(body["error"].as_str()) {
-                    secrets::delete(ACCESS_TOKEN);
-                    secrets::delete(REFRESH_TOKEN);
-                }
-                return Err(format!("token refresh failed — sign in again ({body})"));
+            let connection: ConnectionConfig = ron::from_str(
+                request
+                    .connection_config
+                    .as_deref()
+                    .ok_or("salesforce requires a named connection")?,
+            )
+            .map_err(|error| format!("salesforce connection config: {error}"))?;
+            if !connection.instance_url.starts_with("https://") {
+                return Err("connection instance_url must be an https:// origin".into());
             }
-        };
-        secrets::put(ACCESS_TOKEN, token.as_bytes())
+            run_query(&config, &connection.instance_url)
+        }
     }
 
-    fn run_query(config: &Config) -> Result<FetchResult, String> {
-        if secrets::get(ACCESS_TOKEN).is_none() {
-            return Err("no token — sign the realm in first".into());
-        }
+    fn run_query(config: &Config, instance_url: &str) -> Result<FetchResult, String> {
         let first_url = format!(
             "{}/services/data/{}/query?q={}",
-            config.instance_url,
+            instance_url,
             config.api_version,
             percent_encode(&config.query)
         );
         let mut records = Vec::new();
         let mut next = Some(first_url);
-        let mut refreshed = false;
         let mut pages = 0u32;
         while let Some(url) = next.take() {
             let response = http::fetch(&request(
@@ -319,15 +195,9 @@ mod guest {
                 Method::Get,
                 url.clone(),
                 None,
-                Some(ACCESS_TOKEN),
+                None,
             ))
             .map_err(|error| error.message)?;
-            if response.status == 401 && !refreshed {
-                refresh(config)?;
-                refreshed = true;
-                next = Some(url);
-                continue;
-            }
             if !(200..300).contains(&response.status) {
                 return Err(format!(
                     "SOQL query failed (HTTP {}): {}",
@@ -341,7 +211,7 @@ mod guest {
             }
             next = page["nextRecordsUrl"]
                 .as_str()
-                .map(|path| format!("{}{}", config.instance_url, path));
+                .map(|path| format!("{instance_url}{path}"));
             pages += 1;
             if next.is_some() {
                 control::progress(&format!("{} records ({pages} pages)…", records.len()));
@@ -391,17 +261,4 @@ mod guest {
     }
 
     bindings::export!(Salesforce with_types_in bindings);
-}
-
-#[cfg(test)]
-mod tests {
-    use super::credentials_were_rejected;
-
-    #[test]
-    fn terminal_oauth_rejections_retire_cached_credentials() {
-        assert!(credentials_were_rejected(Some("invalid_grant")));
-        assert!(credentials_were_rejected(Some("invalid_client")));
-        assert!(!credentials_were_rejected(Some("temporarily_unavailable")));
-        assert!(!credentials_were_rejected(None));
-    }
 }

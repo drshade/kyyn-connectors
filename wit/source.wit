@@ -209,6 +209,9 @@ interface api {
     record fetch-request {
         /// Canonical RON config text, exactly as consented in sources.ron.
         config: string,
+        /// Canonical non-secret config of the selected named connection.
+        /// Credential material remains host-only and is never carried here.
+        connection-config: option<string>,
         spec: run-spec,
         /// Engine-owned; advances only when a run manifest publishes.
         checkpoint: option<string>,

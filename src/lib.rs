@@ -43,6 +43,8 @@ mod contract {
         world: String,
         namespace: String,
         #[serde(default)]
+        connection: Option<ConnectionRequirement>,
+        #[serde(default)]
         capabilities: Capabilities,
         component: String,
         component_sha256: String,
@@ -60,7 +62,16 @@ mod contract {
         component_sha256: String,
         delivery: SinkDelivery,
         #[serde(default)]
+        connection: Option<ConnectionRequirement>,
+        #[serde(default)]
         config: Vec<ConfigField>,
+    }
+
+    #[derive(Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct ConnectionRequirement {
+        provider: String,
+        capabilities: Vec<String>,
     }
 
     #[derive(Deserialize)]
@@ -303,6 +314,29 @@ mod contract {
                 source.name
             );
             assert_eq!(source.component_sha256.len(), 64, "{} digest", source.name);
+            if let Some(requirement) = &source.connection {
+                let provider = manifest
+                    .connections
+                    .iter()
+                    .find(|provider| provider.name == requirement.provider)
+                    .expect("source connection provider exists");
+                assert!(
+                    requirement
+                        .capabilities
+                        .iter()
+                        .all(|capability| provider.capabilities.contains(capability)),
+                    "{} asks for an unadvertised connection capability",
+                    source.name
+                );
+                assert!(source.capabilities.auth.is_none());
+                assert!(
+                    source
+                        .capabilities
+                        .requests
+                        .iter()
+                        .all(|grant| matches!(grant.purpose, Purpose::Observe))
+                );
+            }
 
             let mut fields = HashSet::new();
             for field in &source.config {
@@ -349,6 +383,16 @@ mod contract {
                         source.name,
                         field
                     );
+                } else if let Some(field) = grant.authority.strip_prefix("connection:") {
+                    let requirement = source.connection.as_ref().expect("connection authority");
+                    let provider = manifest
+                        .connections
+                        .iter()
+                        .find(|provider| provider.name == requirement.provider)
+                        .expect("connection provider");
+                    assert!(provider.config.iter().any(|candidate| {
+                        candidate.name == field && candidate.ty == ConfigType::HttpsOrigin
+                    }));
                 } else {
                     assert!(grant.authority.starts_with("https://"));
                     assert!(!grant.authority.ends_with('/'));
@@ -361,10 +405,10 @@ mod contract {
             .iter()
             .find(|source| source.name == "microsoft-files")
             .expect("Microsoft files source is advertised");
+        assert!(microsoft_files.capabilities.auth.is_none());
         assert_eq!(
-            microsoft_files.capabilities.auth.as_deref(),
-            Some("ms-files-read"),
-            "files consent has a dedicated realm"
+            microsoft_files.connection.as_ref().unwrap().capabilities,
+            ["files-read"]
         );
         assert_eq!(
             microsoft_files
@@ -387,6 +431,19 @@ mod contract {
                 sink.name
             );
             assert_eq!(sink.component_sha256.len(), 64, "{} digest", sink.name);
+            if let Some(requirement) = &sink.connection {
+                let provider = manifest
+                    .connections
+                    .iter()
+                    .find(|provider| provider.name == requirement.provider)
+                    .expect("sink connection provider exists");
+                assert!(
+                    requirement
+                        .capabilities
+                        .iter()
+                        .all(|capability| provider.capabilities.contains(capability))
+                );
+            }
             let mut fields = HashSet::new();
             for field in &sink.config {
                 assert!(
@@ -447,6 +504,10 @@ mod contract {
         assert_eq!(microsoft.config.len(), 1);
         assert_eq!(microsoft.config[0].name, "candidate");
         assert!(microsoft.config[0].required);
+        assert_eq!(
+            microsoft.connection.as_ref().unwrap().capabilities,
+            ["files-write"]
+        );
     }
 
     #[test]
@@ -490,7 +551,7 @@ mod contract {
     #[test]
     fn vendored_wit_matches_the_frozen_engine_contract() {
         const FROZEN_SOURCE_WIT_SHA256: &str =
-            "39b217ca312114ce734f880da68ab4d79c6ad1498639f7534bd5db7e4faf18e7";
+            "88852bf6838f71b8001a785e2a5ff4fcaeb6b613594aab9323d3cf17ca52301a";
         assert_eq!(
             format!(
                 "{:x}",
@@ -510,7 +571,7 @@ mod contract {
             "wit/sink.wit drifted from kyyn's frozen kyyn:sink@1 contract"
         );
         const FROZEN_CONNECTION_WIT_SHA256: &str =
-            "48fd772b4b3227052528c83c9739ddf8b0cea41dbda82f018c0fd251b63345a5";
+            "238ca56e8f55feb6f244be50510f3a40bc7d7a694252f11c24dd7cfbda9f6941";
         assert_eq!(
             format!(
                 "{:x}",

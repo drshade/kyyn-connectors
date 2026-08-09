@@ -29,6 +29,7 @@ interface secrets {
 }
 
 interface api {
+    variant request-authorization { bearer(string) }
     record auth-challenge {
         verification-url: string,
         user-code: string,
@@ -39,6 +40,7 @@ interface api {
     variant connection-status { enrolled(string), not-enrolled(string), expired(string) }
     validate-config: func(config: string) -> result<_, string>;
     status: func(config: string, capabilities: list<string>) -> result<connection-status, string>;
+    authorization: func(config: string, capabilities: list<string>) -> result<request-authorization, string>;
     auth-begin: func(config: string, capabilities: list<string>) -> result<auth-challenge, string>;
     auth-poll: func(config: string, capabilities: list<string>, handle: string) -> result<auth-poll-result, string>;
     disconnect: func() -> result<_, string>;
