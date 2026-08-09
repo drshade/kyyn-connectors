@@ -30,6 +30,8 @@ mod contract {
         #[serde(default)]
         requests: Vec<RequestGrant>,
         #[serde(default)]
+        verification_origins: Vec<String>,
+        #[serde(default)]
         config: Vec<ConfigField>,
     }
 
@@ -226,7 +228,61 @@ mod contract {
                     assert!(!grant.authority.ends_with('/'));
                 }
             }
+            assert!(
+                !connection.verification_origins.is_empty(),
+                "{} has no reviewed sign-in destination",
+                connection.name
+            );
+            let origin_count = connection
+                .verification_origins
+                .iter()
+                .collect::<HashSet<_>>()
+                .len();
+            assert_eq!(
+                origin_count,
+                connection.verification_origins.len(),
+                "{} has duplicate sign-in destinations",
+                connection.name
+            );
+            for origin in &connection.verification_origins {
+                if let Some(field) = origin.strip_prefix("config:") {
+                    assert!(connection.config.iter().any(|candidate| {
+                        candidate.name == field && candidate.ty == ConfigType::HttpsOrigin
+                    }));
+                } else {
+                    assert!(origin.starts_with("https://"));
+                    assert!(!origin.ends_with('/'));
+                    assert!(!origin.contains(['?', '#', '@']));
+                }
+            }
         }
+
+        let microsoft = manifest
+            .connections
+            .iter()
+            .find(|connection| connection.name == "microsoft")
+            .expect("Microsoft connection provider");
+        assert_eq!(
+            microsoft.verification_origins,
+            [
+                "https://microsoft.com",
+                "https://www.microsoft.com",
+                "https://login.microsoftonline.com",
+            ]
+        );
+        let salesforce = manifest
+            .connections
+            .iter()
+            .find(|connection| connection.name == "salesforce")
+            .expect("Salesforce connection provider");
+        assert_eq!(
+            salesforce.verification_origins,
+            [
+                "config:instance_url",
+                "https://login.salesforce.com",
+                "https://test.salesforce.com",
+            ]
+        );
         let mut names = HashSet::new();
         for source in &manifest.sources {
             assert!(
