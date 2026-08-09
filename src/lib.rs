@@ -278,6 +278,7 @@ mod contract {
             [
                 "https://microsoft.com",
                 "https://www.microsoft.com",
+                "https://login.microsoft.com",
                 "https://login.microsoftonline.com",
             ]
         );
