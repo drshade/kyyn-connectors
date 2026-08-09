@@ -240,6 +240,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "kyyn-component-microsoft-connection"
+version = "0.1.0"
+dependencies = [
+ "ron",
+ "serde",
+ "serde_json",
+ "wit-bindgen",
+]
+
+[[package]]
 name = "kyyn-component-microsoft-file-replace"
 version = "0.1.0"
 dependencies = [
@@ -273,6 +283,16 @@ name = "kyyn-component-salesforce"
 version = "0.1.0"
 dependencies = [
  "kyyn-source-bundle",
+ "ron",
+ "serde",
+ "serde_json",
+ "wit-bindgen",
+]
+
+[[package]]
+name = "kyyn-component-salesforce-connection"
+version = "0.1.0"
+dependencies = [
  "ron",
  "serde",
  "serde_json",

@@ -10,9 +10,27 @@ mod contract {
     #[serde(deny_unknown_fields)]
     struct Manifest {
         connector_manifest: u32,
+        #[serde(default)]
+        connections: Vec<Connection>,
         sources: Vec<Source>,
         #[serde(default)]
         sinks: Vec<Sink>,
+    }
+
+    #[derive(Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct Connection {
+        name: String,
+        summary: String,
+        world: String,
+        component: String,
+        component_sha256: String,
+        #[serde(default)]
+        capabilities: Vec<String>,
+        #[serde(default)]
+        requests: Vec<RequestGrant>,
+        #[serde(default)]
+        config: Vec<ConfigField>,
     }
 
     #[derive(Deserialize)]
@@ -83,7 +101,7 @@ mod contract {
         Post,
     }
 
-    #[derive(Default, Deserialize, PartialEq, Eq)]
+    #[derive(Debug, Default, Deserialize, PartialEq, Eq)]
     enum Continuation {
         #[default]
         None,
@@ -131,8 +149,84 @@ mod contract {
     fn manifest_is_direction_explicit_closed_and_reviewable() {
         let manifest = manifest();
         assert_eq!(manifest.connector_manifest, 1);
+        assert_eq!(manifest.connections.len(), 2, "two account providers");
         assert_eq!(manifest.sinks.len(), 3, "three first-party sinks");
         assert_eq!(manifest.sources.len(), 9, "nine first-party sources");
+        let mut provider_names = HashSet::new();
+        for connection in &manifest.connections {
+            assert!(
+                provider_names.insert(&connection.name),
+                "duplicate connection provider {}",
+                connection.name
+            );
+            assert_eq!(
+                connection.world, "kyyn:connection@1",
+                "{} world",
+                connection.name
+            );
+            assert!(
+                !connection.summary.trim().is_empty(),
+                "{} summary",
+                connection.name
+            );
+            assert!(
+                connection.component.starts_with("components/connections/"),
+                "{} component direction must be visible in its path",
+                connection.name
+            );
+            assert_eq!(
+                connection.component_sha256.len(),
+                64,
+                "{} digest",
+                connection.name
+            );
+            assert!(
+                !connection.capabilities.is_empty(),
+                "{} advertises no selectable capabilities",
+                connection.name
+            );
+            let capability_count = connection.capabilities.iter().collect::<HashSet<_>>().len();
+            assert_eq!(
+                capability_count,
+                connection.capabilities.len(),
+                "{} has duplicate capabilities",
+                connection.name
+            );
+            let mut fields = HashSet::new();
+            for field in &connection.config {
+                assert!(
+                    fields.insert(&field.name),
+                    "{} duplicate config {}",
+                    connection.name,
+                    field.name
+                );
+                assert!(
+                    !field.doc.trim().is_empty(),
+                    "{} config doc",
+                    connection.name
+                );
+                assert!(
+                    !field.required || field.example.is_some(),
+                    "{}#{} is required but has no example",
+                    connection.name,
+                    field.name
+                );
+            }
+            for grant in &connection.requests {
+                assert!(matches!(grant.purpose, Purpose::Authenticate));
+                assert!(matches!(grant.method, Method::Post));
+                assert!(grant.path.starts_with('/'));
+                assert_eq!(grant.continuation, Continuation::None);
+                if let Some(field) = grant.authority.strip_prefix("config:") {
+                    assert!(connection.config.iter().any(|candidate| {
+                        candidate.name == field && candidate.ty == ConfigType::HttpsOrigin
+                    }));
+                } else {
+                    assert!(grant.authority.starts_with("https://"));
+                    assert!(!grant.authority.ends_with('/'));
+                }
+            }
+        }
         let mut names = HashSet::new();
         for source in &manifest.sources {
             assert!(
@@ -302,6 +396,17 @@ mod contract {
     #[test]
     fn committed_component_digests_match_the_manifest() {
         let manifest = manifest();
+        for connection in manifest.connections {
+            let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join(&connection.component);
+            let bytes = std::fs::read(&path)
+                .unwrap_or_else(|error| panic!("reading {}: {error}", path.display()));
+            assert_eq!(
+                format!("{:x}", sha2::Sha256::digest(bytes)),
+                connection.component_sha256,
+                "{} has a stale component_sha256 pin",
+                connection.name
+            );
+        }
         for source in manifest.sources {
             let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join(&source.component);
             let bytes = std::fs::read(&path)
@@ -348,11 +453,53 @@ mod contract {
             FROZEN_SINK_WIT_SHA256,
             "wit/sink.wit drifted from kyyn's frozen kyyn:sink@1 contract"
         );
+        const FROZEN_CONNECTION_WIT_SHA256: &str =
+            "48fd772b4b3227052528c83c9739ddf8b0cea41dbda82f018c0fd251b63345a5";
+        assert_eq!(
+            format!(
+                "{:x}",
+                sha2::Sha256::digest(include_bytes!("../wit/connection.wit"))
+            ),
+            FROZEN_CONNECTION_WIT_SHA256,
+            "wit/connection.wit drifted from kyyn's frozen kyyn:connection@1 contract"
+        );
     }
 
     #[test]
     fn component_imports_are_a_subset_of_declared_capabilities() {
         let manifest = manifest();
+        for connection in &manifest.connections {
+            let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join(&connection.component);
+            let bytes = std::fs::read(&path)
+                .unwrap_or_else(|error| panic!("reading {}: {error}", path.display()));
+            let mut level = 0usize;
+            let mut imports = BTreeSet::new();
+            for payload in wasmparser::Parser::new(0).parse_all(&bytes) {
+                match payload.unwrap_or_else(|error| {
+                    panic!("parsing {} component: {error}", connection.name)
+                }) {
+                    wasmparser::Payload::Version { .. } => level += 1,
+                    wasmparser::Payload::End(_) => level -= 1,
+                    wasmparser::Payload::ComponentImportSection(section) if level == 1 => {
+                        for import in section {
+                            let name = import.expect("component import").name.name;
+                            let interface = name
+                                .strip_prefix("kyyn:connection/")
+                                .and_then(|name| name.split('@').next())
+                                .unwrap_or(name);
+                            imports.insert(interface.to_string());
+                        }
+                    }
+                    _ => {}
+                }
+            }
+            assert_eq!(
+                imports,
+                BTreeSet::from(["http".into(), "secrets".into()]),
+                "{} provider must have only the bounded enrollment host imports",
+                connection.name
+            );
+        }
         for source in manifest.sources {
             let mut allowed = BTreeSet::from(["control", "evidence"]);
             if !source.capabilities.requests.is_empty() {

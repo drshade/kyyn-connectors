@@ -4,6 +4,33 @@
 // their bearer-like URLs never cross into connector memory.
 (
     connector_manifest: 1,
+    connections: [
+        (name: "microsoft", summary: "A reusable Microsoft 365 account connection with least-privilege capability enrollment.",
+         world: "kyyn:connection@1",
+         component: "components/connections/microsoft-connection.wasm",
+         component_sha256: "9c1739512cde93945b8d819d63c9ee53c9f20f4cea970d160e6d10c56258e04a",
+         capabilities: ["calendar-read", "chats-read", "files-read", "files-write", "mail-read", "meetings-read"],
+         requests: [
+            (purpose: Authenticate, authority: "https://login.microsoftonline.com", method: Post, path: "/{segment}/oauth2/v2.0/devicecode"),
+            (purpose: Authenticate, authority: "https://login.microsoftonline.com", method: Post, path: "/{segment}/oauth2/v2.0/token"),
+         ],
+         config: [
+            (name: "tenant", doc: "Entra tenant GUID or domain; organizations supports the shared multi-tenant Kyyn app.", default: Some("organizations")),
+            (name: "client_id", doc: "Public Entra application id; the default is Kyyn's shared multi-tenant app.", default: Some("53ddb21b-849f-45a3-8168-8a0e555f386f")),
+         ]),
+        (name: "salesforce", summary: "A reusable Salesforce org connection enrolled through Connected App device flow.",
+         world: "kyyn:connection@1",
+         component: "components/connections/salesforce-connection.wasm",
+         component_sha256: "5a295da9e16931d1624ec9999d3b763aac834001363caa44f12f326e91337ae2",
+         capabilities: ["api"],
+         requests: [
+            (purpose: Authenticate, authority: "config:instance_url", method: Post, path: "/services/oauth2/token"),
+         ],
+         config: [
+            (name: "instance_url", doc: "The org's exact My Domain HTTPS origin.", ty: HttpsOrigin, required: true, example: Some("https://acme.my.salesforce.com")),
+            (name: "client_id", doc: "The Connected App consumer key (device flow enabled; not a secret).", required: true, example: Some("3MVG9…")),
+         ]),
+    ],
     sources: [
         (name: "sweep", summary: "Glob a local directory tree into hashed, versioned evidence.",
          world: "kyyn:source@1", namespace: "file",
