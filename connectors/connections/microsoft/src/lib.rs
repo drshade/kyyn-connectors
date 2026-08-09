@@ -57,6 +57,7 @@ fn scopes(capabilities: &[String]) -> Result<String, String> {
             }
             "files-write" => {
                 scopes.insert("Files.ReadWrite");
+                scopes.insert("Sites.ReadWrite.All");
             }
             _ => unreachable!("normalized above"),
         }
@@ -335,7 +336,10 @@ mod tests {
     #[test]
     fn capability_union_is_exact_sorted_and_rejects_duplicates() {
         let value = scopes(&["files-write".into(), "mail-read".into()]).expect("known union");
-        assert_eq!(value, "Files.ReadWrite Mail.Read User.Read offline_access");
+        assert_eq!(
+            value,
+            "Files.ReadWrite Mail.Read Sites.ReadWrite.All User.Read offline_access"
+        );
         assert!(normalized_capabilities(&["mail-read".into(), "mail-read".into()]).is_err());
         assert!(normalized_capabilities(&["directory-admin".into()]).is_err());
     }
