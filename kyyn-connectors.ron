@@ -151,10 +151,10 @@
          component: "components/sources/microsoft-files.wasm",
          component_sha256: "4cf7f6d91c6253ee468867c451806504c8f434e578b3cd828a1900828465b8b1",
          config: [
-            (name: "drive_id", doc: "Canonical drive identity expanded by source_guide from an owner-resolved candidate.", required: true, example: Some("<owner-resolved-drive-id>")),
-            (name: "item_id", doc: "Canonical file or folder identity expanded by source_guide from an owner-resolved candidate.", required: true, example: Some("<owner-resolved-item-id>")),
+            (name: "drive_id", doc: "Canonical drive identity resolved from the owner's ephemeral browser link.", required: true, example: Some("<owner-resolved-drive-id>")),
+            (name: "item_id", doc: "Canonical file or folder identity resolved from the owner's ephemeral browser link.", required: true, example: Some("<owner-resolved-item-id>")),
             (name: "item_kind", doc: "Resolved target kind: file or folder.", required: true, example: Some("<owner-resolved-kind>")),
-            (name: "display_name", doc: "Safe owner-facing label captured during resolution.", required: true, example: Some("<owner-resolved-label>")),
+            (name: "display_name", doc: "Safe owner-facing label captured during inline resolution.", required: true, example: Some("<owner-resolved-label>")),
             (name: "patterns", doc: "For a folder, globs relative to that folder; ** crosses levels.", ty: StrList, example: Some("**/*.xlsx"), default: Some("**/*")),
             (name: "kind", doc: "The evidence kind each included file carries.", default: Some("file")),
             (name: "max_file_bytes", doc: "Per-file size cap; larger files are reported and skipped.", ty: Int, default: Some("67108864")),
@@ -181,8 +181,6 @@
          connection: (provider: "microsoft", capabilities: ["files-write"]),
          component: "components/sinks/microsoft-file-replace.wasm",
          component_sha256: "1058bdde6c0e175a871b43d60b1aa9432025fddee608d9443486b9fe9f7fa711",
-         config: [
-            (name: "candidate", doc: "Owner-resolved local Microsoft output candidate; Kyyn expands it to canonical target identity and a sink-only write realm.", required: true, example: Some("the candidate id shown under Settings → Microsoft files")),
-         ]),
+         config: []),
     ],
 )

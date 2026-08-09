@@ -501,9 +501,7 @@ mod contract {
             microsoft.component,
             "components/sinks/microsoft-file-replace.wasm"
         );
-        assert_eq!(microsoft.config.len(), 1);
-        assert_eq!(microsoft.config[0].name, "candidate");
-        assert!(microsoft.config[0].required);
+        assert!(microsoft.config.is_empty());
         assert_eq!(
             microsoft.connection.as_ref().unwrap().capabilities,
             ["files-write"]
