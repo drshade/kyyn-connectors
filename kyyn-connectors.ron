@@ -8,7 +8,7 @@
         (name: "microsoft", summary: "A reusable Microsoft 365 account connection with least-privilege capability enrollment.",
          world: "kyyn:connection@1",
          component: "components/connections/microsoft-connection.wasm",
-         component_sha256: "840489a640dc9c94756103ef58f6d64f93d2e119e14bbac0af5871f91d014189",
+         component_sha256: "867d72d37ada21ddabb0580b7587a53a3f06510f0936172f99a462191b8cb345",
          capabilities: ["calendar-read", "chats-read", "files-read", "files-write", "mail-read", "meetings-read"],
          requests: [
             (purpose: Authenticate, authority: "https://login.microsoftonline.com", method: Post, path: "/{segment}/oauth2/v2.0/devicecode"),
