@@ -76,7 +76,7 @@ mod guest {
 
     use super::{DEFAULT_CLIENT_ID, DEFAULT_TENANT, normalized_capabilities, scopes};
     use bindings::exports::kyyn::connection::api::{
-        AuthChallenge, AuthPollResult, ConnectionStatus, Guest,
+        AuthChallenge, AuthPollResult, ConnectionStatus, Guest, RequestAuthorization,
     };
     use bindings::kyyn::connection::http::{self, Method, Request, Response};
     use bindings::kyyn::connection::secrets;
@@ -251,6 +251,22 @@ mod guest {
                 Ok(()) => ConnectionStatus::Enrolled("Microsoft account".into()),
                 Err(reason) => ConnectionStatus::Expired(reason),
             })
+        }
+
+        fn authorization(
+            config: String,
+            capabilities: Vec<String>,
+        ) -> Result<RequestAuthorization, String> {
+            let config = parse(&config)?;
+            validate(&config)?;
+            let capabilities = normalized_capabilities(&capabilities)?;
+            if stored_capabilities().as_ref() != Some(&capabilities) {
+                return Err("the accepted capability set needs owner sign-in".into());
+            }
+            refresh(&config, &capabilities)?;
+            let token = secrets::get(ACCESS_TOKEN).ok_or("no local credential")?;
+            let token = String::from_utf8(token).map_err(|_| "invalid local credential")?;
+            Ok(RequestAuthorization::Bearer(token))
         }
 
         fn auth_begin(config: String, capabilities: Vec<String>) -> Result<AuthChallenge, String> {

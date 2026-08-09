@@ -12,26 +12,16 @@ mod guest {
         Item, ConnectorDescribe, RunSpec,
     };
     use bindings::kyyn::source::http::{self, Method, Purpose, Request, Response};
-    use bindings::kyyn::source::{control, evidence, secrets};
+    use bindings::kyyn::source::{control, evidence};
     use serde::{Deserialize, Serialize};
     use sha2::Digest as _;
 
-    const ACCESS_TOKEN: &str = "ms-access-token";
-    const REFRESH_TOKEN: &str = "ms-refresh-token";
-    const DEFAULT_CLIENT_ID: &str = "53ddb21b-849f-45a3-8168-8a0e555f386f";
-    const SCOPES: &str = "Mail.Read Calendars.Read User.Read Chat.Read \
-        OnlineMeetings.Read OnlineMeetingTranscript.Read.All \
-        OnlineMeetingArtifact.Read.All Files.Read.All Sites.Read.All offline_access";
     const RESPONSE_CAP: u64 = 64 * 1024 * 1024;
     const MAX_PAGES: u32 = 500;
 
     #[derive(Deserialize)]
     #[serde(deny_unknown_fields)]
     struct Config {
-        #[serde(default = "default_client_id")]
-        client_id: String,
-        #[serde(default = "default_tenant")]
-        tenant: String,
         #[serde(default)]
         owner_addresses: Vec<String>,
         #[serde(default, deserialize_with = "opt_string_lenient")]
@@ -44,14 +34,6 @@ mod guest {
         kind: String,
         #[serde(default = "default_max_file_bytes")]
         max_file_bytes: u64,
-    }
-
-    fn default_client_id() -> String {
-        DEFAULT_CLIENT_ID.into()
-    }
-
-    fn default_tenant() -> String {
-        "organizations".into()
     }
 
     fn opt_string_lenient<'de, D>(deserializer: D) -> Result<Option<String>, D::Error>
@@ -75,8 +57,6 @@ mod guest {
             ron::from_str(text).map_err(|error| format!("graph config: {error}"))?;
         if matches!(value, ron::Value::Unit) {
             return Ok(Config {
-                client_id: default_client_id(),
-                tenant: default_tenant(),
                 owner_addresses: Vec::new(),
                 mail_filter: None,
                 url: None,
@@ -87,7 +67,7 @@ mod guest {
         }
         value.into_rust().map_err(|error| {
             format!(
-                "graph config shape (optional client_id, tenant, owner_addresses; \
+                "graph config shape (optional owner_addresses; \
                  mail_filter is mail-only): {error}"
             )
         })
@@ -106,17 +86,6 @@ mod guest {
     }
 
     fn validate(config: &Config) -> Result<(), String> {
-        if config.client_id.trim().is_empty() {
-            return Err("client_id must not be empty".into());
-        }
-        if config.tenant.trim().is_empty()
-            || !config
-                .tenant
-                .chars()
-                .all(|ch| ch.is_ascii_alphanumeric() || matches!(ch, '-' | '.'))
-        {
-            return Err("tenant must be a tenant id or organizations".into());
-        }
         if super::CONNECTOR_KIND != "mail" && config.mail_filter.is_some() {
             return Err(format!(
                 "mail_filter applies to graph-mail, not {}",
@@ -166,28 +135,12 @@ mod guest {
         encoded
     }
 
-    fn form(fields: &[(&str, &str)]) -> Vec<u8> {
-        fields
-            .iter()
-            .map(|(name, value)| format!("{}={}", percent_encode(name), percent_encode(value)))
-            .collect::<Vec<_>>()
-            .join("&")
-            .into_bytes()
-    }
-
-    fn identity_url(config: &Config, endpoint: &str) -> String {
-        format!(
-            "https://login.microsoftonline.com/{}/oauth2/v2.0/{endpoint}",
-            config.tenant
-        )
-    }
-
     fn request(
         purpose: Purpose,
         method: Method,
         url: String,
         body: Option<Vec<u8>>,
-        authorization: Option<&str>,
+        _authorization: Option<&str>,
     ) -> Request {
         Request {
             purpose,
@@ -202,7 +155,7 @@ mod guest {
                 ("prefer".into(), "outlook.body-content-type=\"text\"".into()),
             ],
             body,
-            secret_authorization: authorization.map(str::to_string),
+            secret_authorization: None,
             max_response_bytes: RESPONSE_CAP,
             timeout_ms: 120_000,
         }
@@ -213,39 +166,10 @@ mod guest {
             .map_err(|error| format!("invalid Graph JSON (HTTP {}): {error}", response.status))
     }
 
-    fn refresh(config: &Config) -> Result<(), String> {
-        let refresh = secrets::get(REFRESH_TOKEN)
-            .ok_or("token expired and no refresh token — sign in again")?;
-        let refresh =
-            std::str::from_utf8(&refresh).map_err(|_| "stored refresh token is not UTF-8")?;
-        let response = http::fetch(&request(
-            Purpose::Authenticate,
-            Method::Post,
-            identity_url(config, "token"),
-            Some(form(&[
-                ("grant_type", "refresh_token"),
-                ("client_id", &config.client_id),
-                ("refresh_token", refresh),
-                ("scope", SCOPES),
-            ])),
-            None,
-        ))
-        .map_err(|error| error.message)?;
-        let body = json(&response)?;
-        let token = body["access_token"]
-            .as_str()
-            .ok_or_else(|| format!("token refresh failed — sign in again ({body})"))?;
-        secrets::put(ACCESS_TOKEN, token.as_bytes())?;
-        if let Some(rotated) = body["refresh_token"].as_str() {
-            secrets::put(REFRESH_TOKEN, rotated.as_bytes())?;
-        }
-        Ok(())
-    }
-
     fn graph_response(
-        config: &Config,
+        _config: &Config,
         url: &str,
-        refreshed: &mut bool,
+        _refreshed: &mut bool,
     ) -> Result<Response, String> {
         for attempt in 1..=5u64 {
             let response = http::fetch(&request(
@@ -253,14 +177,9 @@ mod guest {
                 Method::Get,
                 url.into(),
                 None,
-                Some(ACCESS_TOKEN),
+                None,
             ))
             .map_err(|error| error.message)?;
-            if response.status == 401 && !*refreshed {
-                refresh(config)?;
-                *refreshed = true;
-                continue;
-            }
             if response.status == 429 && attempt < 5 {
                 let retry_after = response
                     .headers
@@ -301,9 +220,6 @@ mod guest {
     }
 
     fn graph_pages(config: &Config, first_url: String) -> Result<Vec<serde_json::Value>, String> {
-        if secrets::get(ACCESS_TOKEN).is_none() {
-            return Err("no token — sign the realm in first".into());
-        }
         let mut records = Vec::new();
         let mut next = Some(first_url);
         let mut refreshed = false;
@@ -619,14 +535,10 @@ mod guest {
                     format!("attachments/{}", safe_attachment_name(&meta.id, &name));
                 let url = attachment_value_url(message_id, &meta.id);
                 let mut attachment_request =
-                    request(Purpose::Observe, Method::Get, url.clone(), None, Some(ACCESS_TOKEN));
+                    request(Purpose::Observe, Method::Get, url.clone(), None, None);
                 attachment_request.max_response_bytes = MAX_ATTACHMENT_BYTES;
-                let mut response =
+                let response =
                     http::fetch(&attachment_request).map_err(|error| error.message)?;
-                if response.status == 401 {
-                    refresh(config)?;
-                    response = http::fetch(&attachment_request).map_err(|error| error.message)?;
-                }
                 match response.status {
                     200..=299 => {
                         let file = evidence::open(&relative)?;
@@ -1369,9 +1281,6 @@ mod guest {
     fn fetch_sharepoint(config: &Config, checkpoint: Option<String>) -> Result<FetchResult, String> {
         use std::collections::BTreeMap;
         let sharing_url = config.url.as_deref().ok_or("sharepoint url is required")?;
-        if secrets::get(ACCESS_TOKEN).is_none() {
-            return Err("no token — sign the realm in first".into());
-        }
         let metadata_url = format!(
             "https://graph.microsoft.com/v1.0/shares/{}/driveItem",
             share_token(sharing_url)
@@ -1572,7 +1481,7 @@ mod guest {
                 } else {
                     FetchStyle::Windowed
                 },
-                auth_realm: Some("ms-graph".into()),
+                auth_realm: None,
             }
         }
 
@@ -1580,84 +1489,20 @@ mod guest {
             validate(&parse_config(&config)?)
         }
 
-        fn config_auth_realm(config: String) -> Result<Option<String>, String> {
-            let config = parse_config(&config)?;
-            validate(&config)?;
-            Ok(Some(format!(
-                "ms-graph:{}:{}",
-                config.tenant, config.client_id
-            )))
+        fn config_auth_realm(_config: String) -> Result<Option<String>, String> {
+            Ok(None)
         }
 
         fn status(_config: String) -> Result<AuthStatus, String> {
-            if secrets::get(ACCESS_TOKEN).is_some() {
-                Ok(AuthStatus::Authenticated(
-                    "token cached (verified on fetch)".into(),
-                ))
-            } else {
-                Ok(AuthStatus::NotAuthenticated(
-                    "no token — sign the realm in first".into(),
-                ))
-            }
+            Ok(AuthStatus::NotRequired)
         }
 
-        fn auth_begin(config: String) -> Result<AuthChallenge, String> {
-            let config = parse_config(&config)?;
-            validate(&config)?;
-            let response = http::fetch(&request(
-                Purpose::Authenticate,
-                Method::Post,
-                identity_url(&config, "devicecode"),
-                Some(form(&[("client_id", &config.client_id), ("scope", SCOPES)])),
-                None,
-            ))
-            .map_err(|error| error.message)?;
-            let body = json(&response)?;
-            let field = |name: &str| body[name].as_str().map(str::to_string);
-            Ok(AuthChallenge {
-                verification_url: field("verification_uri")
-                    .ok_or_else(|| format!("device flow refused: {body}"))?,
-                user_code: field("user_code").ok_or("no user_code")?,
-                expires_in_secs: body["expires_in"].as_u64().unwrap_or(900),
-                handle: field("device_code").ok_or("no device_code")?,
-            })
+        fn auth_begin(_config: String) -> Result<AuthChallenge, String> {
+            Err("authentication belongs to the selected named connection".into())
         }
 
-        fn auth_poll(config: String, handle: String) -> Result<AuthPollResult, String> {
-            let config = parse_config(&config)?;
-            validate(&config)?;
-            let response = http::fetch(&request(
-                Purpose::Authenticate,
-                Method::Post,
-                identity_url(&config, "token"),
-                Some(form(&[
-                    ("grant_type", "urn:ietf:params:oauth:grant-type:device_code"),
-                    ("client_id", &config.client_id),
-                    ("device_code", &handle),
-                ])),
-                None,
-            ))
-            .map_err(|error| error.message)?;
-            let body = json(&response)?;
-            if let Some(token) = body["access_token"].as_str() {
-                secrets::put(ACCESS_TOKEN, token.as_bytes())?;
-                let refresh = body["refresh_token"]
-                    .as_str()
-                    .ok_or("no refresh_token returned — offline_access is required")?;
-                secrets::put(REFRESH_TOKEN, refresh.as_bytes())?;
-                return Ok(AuthPollResult::Done("signed in".into()));
-            }
-            match body["error"].as_str() {
-                Some("authorization_pending") | Some("slow_down") => Ok(AuthPollResult::Pending),
-                Some(error) => Ok(AuthPollResult::Failed(format!(
-                    "{error}: {}",
-                    body["error_description"].as_str().unwrap_or("")
-                ))),
-                None => Ok(AuthPollResult::Failed(format!(
-                    "unexpected reply (HTTP {}): {body}",
-                    response.status
-                ))),
-            }
+        fn auth_poll(_config: String, _handle: String) -> Result<AuthPollResult, String> {
+            Err("authentication belongs to the selected named connection".into())
         }
 
         fn fetch(request: FetchRequest) -> Result<FetchResult, String> {

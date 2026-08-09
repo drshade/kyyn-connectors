@@ -17,7 +17,7 @@ mod guest {
 
     use super::validate_capabilities;
     use bindings::exports::kyyn::connection::api::{
-        AuthChallenge, AuthPollResult, ConnectionStatus, Guest,
+        AuthChallenge, AuthPollResult, ConnectionStatus, Guest, RequestAuthorization,
     };
     use bindings::kyyn::connection::http::{self, Method, Request, Response};
     use bindings::kyyn::connection::secrets;
@@ -170,6 +170,22 @@ mod guest {
                 Ok(()) => ConnectionStatus::Enrolled("Salesforce account".into()),
                 Err(reason) => ConnectionStatus::Expired(reason),
             })
+        }
+
+        fn authorization(
+            config: String,
+            capabilities: Vec<String>,
+        ) -> Result<RequestAuthorization, String> {
+            let config = parse(&config)?;
+            validate(&config)?;
+            validate_capabilities(&capabilities)?;
+            if !capabilities_match(&capabilities) {
+                return Err("the accepted capability set needs owner sign-in".into());
+            }
+            refresh(&config)?;
+            let token = secrets::get(ACCESS_TOKEN).ok_or("no local credential")?;
+            let token = String::from_utf8(token).map_err(|_| "invalid local credential")?;
+            Ok(RequestAuthorization::Bearer(token))
         }
 
         fn auth_begin(config: String, capabilities: Vec<String>) -> Result<AuthChallenge, String> {
