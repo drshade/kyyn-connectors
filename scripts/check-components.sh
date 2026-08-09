@@ -49,13 +49,18 @@ flock -u 9
 
 source_guests="sweep git-repo pack salesforce graph-calendar graph-mail graph-chats graph-meetings microsoft-files"
 sink_guests="file-replace git-ref microsoft-file-replace"
+connection_guests="microsoft-connection salesforce-connection"
 source_packages=""
 sink_packages=""
+connection_packages=""
 for guest in $source_guests; do
   source_packages="$source_packages -p kyyn-component-$guest"
 done
 for guest in $sink_guests; do
   sink_packages="$sink_packages -p kyyn-component-$guest"
+done
+for guest in $connection_guests; do
+  connection_packages="$connection_packages -p kyyn-component-$guest"
 done
 
 (
@@ -76,12 +81,20 @@ done
   cargo build --locked --quiet --release --target wasm32-unknown-unknown $sink_packages
   cargo clippy --locked --quiet --release --target wasm32-unknown-unknown \
       $sink_packages -- -D warnings
+
+  export CARGO_TARGET_WASM32_UNKNOWN_UNKNOWN_RUSTFLAGS="--sysroot=${stable_sysroot} \
+--remap-path-prefix=${stable_sysroot}=/rust \
+-C metadata=kyyn-first-party-connection-v1"
+  cargo build --locked --quiet --release --target wasm32-unknown-unknown $connection_packages
+  cargo clippy --locked --quiet --release --target wasm32-unknown-unknown \
+      $connection_packages -- -D warnings
 )
 
 mkdir -p "$repo_root/components/sources"
 mkdir -p "$repo_root/components/sinks"
+mkdir -p "$repo_root/components/connections"
 failed=false
-for guest in $source_guests $sink_guests; do
+for guest in $source_guests $sink_guests $connection_guests; do
   crate_name="${guest//-/_}"
   core="$repro/wasm32-unknown-unknown/release/kyyn_component_${crate_name}.wasm"
   built="$repro/${guest}.wasm"
@@ -96,7 +109,10 @@ for guest in $source_guests $sink_guests; do
 
   case " $sink_guests " in
     *" $guest "*) direction=sinks ;;
-    *) direction=sources ;;
+    *) case " $connection_guests " in
+         *" $guest "*) direction=connections ;;
+         *) direction=sources ;;
+       esac ;;
   esac
   committed="$repo_root/components/${direction}/${guest}.wasm"
   digest="$(sha256sum "$built" | cut -d' ' -f1)"
@@ -113,14 +129,17 @@ $failed && exit 1
 
 if $update; then
   echo "components updated — re-pin component_sha256 in kyyn-connectors.ron:"
-  for guest in $source_guests $sink_guests; do
+  for guest in $source_guests $sink_guests $connection_guests; do
     case " $sink_guests " in
       *" $guest "*) direction=sinks ;;
-      *) direction=sources ;;
+      *) case " $connection_guests " in
+           *" $guest "*) direction=connections ;;
+           *) direction=sources ;;
+         esac ;;
     esac
     printf '  %-16s %s\n' \
       "$direction/$guest" \
       "$(sha256sum "$repo_root/components/${direction}/${guest}.wasm" | cut -d' ' -f1)"
   done
 fi
-echo "components: kyyn:source@1 and kyyn:sink@1 guests compile and componentize reproducibly"
+echo "components: kyyn:source@1, kyyn:sink@1 and kyyn:connection@1 guests compile and componentize reproducibly"

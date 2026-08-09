@@ -1,0 +1,52 @@
+package kyyn:connection@1.0.0;
+
+interface control {
+    progress: func(message: string);
+    now-ms: func() -> u64;
+    sleep-ms: func(duration-ms: u64);
+}
+
+interface http {
+    enum method { get, post }
+    record request {
+        method: method,
+        url: string,
+        headers: list<tuple<string, string>>,
+        body: option<list<u8>>,
+        max-response-bytes: u64,
+        timeout-ms: u64,
+    }
+    record response { status: u16, headers: list<tuple<string, string>>, body: list<u8> }
+    enum error-kind { denied-request, timeout, too-large, transport, invalid }
+    record http-error { kind: error-kind, message: string }
+    fetch: func(request: request) -> result<response, http-error>;
+}
+
+interface secrets {
+    get: func(name: string) -> option<list<u8>>;
+    put: func(name: string, value: list<u8>) -> result<_, string>;
+    delete: func(name: string);
+}
+
+interface api {
+    record auth-challenge {
+        verification-url: string,
+        user-code: string,
+        expires-in-secs: u64,
+        handle: string,
+    }
+    variant auth-poll-result { pending, done(string), failed(string) }
+    variant connection-status { enrolled(string), not-enrolled(string), expired(string) }
+    validate-config: func(config: string) -> result<_, string>;
+    status: func(config: string, capabilities: list<string>) -> result<connection-status, string>;
+    auth-begin: func(config: string, capabilities: list<string>) -> result<auth-challenge, string>;
+    auth-poll: func(config: string, capabilities: list<string>, handle: string) -> result<auth-poll-result, string>;
+    disconnect: func() -> result<_, string>;
+}
+
+world connection {
+    import control;
+    import http;
+    import secrets;
+    export api;
+}
