@@ -1,3 +1,24 @@
+#[cfg(any(test, all(target_arch = "wasm32", target_os = "unknown")))]
+use serde::Deserialize;
+
+#[cfg(any(test, all(target_arch = "wasm32", target_os = "unknown")))]
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ConnectionConfig {
+    instance_url: String,
+    #[serde(rename = "client_id")]
+    _client_id: String,
+}
+
+#[cfg(any(test, all(target_arch = "wasm32", target_os = "unknown")))]
+fn parse_connection_config(text: &str) -> Result<ConnectionConfig, String> {
+    let value: ron::Value =
+        ron::from_str(text).map_err(|error| format!("salesforce connection config: {error}"))?;
+    value.into_rust().map_err(|error| {
+        format!("salesforce connection config shape (instance_url, client_id): {error}")
+    })
+}
+
 #[cfg(all(target_arch = "wasm32", target_os = "unknown"))]
 mod guest {
     mod bindings {
@@ -7,6 +28,7 @@ mod guest {
         });
     }
 
+    use super::parse_connection_config;
     use bindings::exports::kyyn::source::api::{
         AuthChallenge, AuthPollResult, AuthStatus, ConnectorDescribe, FetchRequest, FetchResult,
         FetchStyle, Guest, Item, RunSpec,
@@ -27,14 +49,6 @@ mod guest {
         api_version: String,
         #[serde(default = "default_id_field")]
         id_field: String,
-    }
-
-    #[derive(Deserialize)]
-    #[serde(deny_unknown_fields)]
-    struct ConnectionConfig {
-        instance_url: String,
-        #[serde(rename = "client_id")]
-        _client_id: String,
     }
 
     fn default_kind() -> String {
@@ -165,13 +179,12 @@ mod guest {
             }
             let config = parse_config(&request.config)?;
             validate(&config)?;
-            let connection: ConnectionConfig = ron::from_str(
+            let connection = parse_connection_config(
                 request
                     .connection_config
                     .as_deref()
                     .ok_or("salesforce requires a named connection")?,
-            )
-            .map_err(|error| format!("salesforce connection config: {error}"))?;
+            )?;
             if !connection.instance_url.starts_with("https://") {
                 return Err("connection instance_url must be an https:// origin".into());
             }
@@ -261,4 +274,31 @@ mod guest {
     }
 
     bindings::export!(Salesforce with_types_in bindings);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn connection_config_accepts_engine_canonical_value_encoding() {
+        let accepted: ron::Value = ron::from_str(
+            r#"(
+                instance_url: "https://example.my.salesforce.com",
+                client_id: "consumer-key",
+            )"#,
+        )
+        .unwrap();
+        let wire = ron::ser::to_string_pretty(
+            &accepted,
+            ron::ser::PrettyConfig::default()
+                .struct_names(false)
+                .escape_strings(false),
+        )
+        .unwrap();
+
+        let parsed = parse_connection_config(&wire).unwrap();
+        assert_eq!(parsed.instance_url, "https://example.my.salesforce.com");
+        assert_eq!(parsed._client_id, "consumer-key");
+    }
 }

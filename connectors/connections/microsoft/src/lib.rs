@@ -65,6 +65,23 @@ fn scopes(capabilities: &[String]) -> Result<String, String> {
     Ok(scopes.into_iter().collect::<Vec<_>>().join(" "))
 }
 
+#[cfg(any(test, all(target_arch = "wasm32", target_os = "unknown")))]
+#[derive(Debug, PartialEq, Eq)]
+enum LocalCredentialStatus {
+    NotEnrolled,
+    Incomplete,
+    Enrolled,
+}
+
+#[cfg(any(test, all(target_arch = "wasm32", target_os = "unknown")))]
+fn local_credential_status(has_access: bool, has_refresh: bool) -> LocalCredentialStatus {
+    match (has_access, has_refresh) {
+        (false, false) => LocalCredentialStatus::NotEnrolled,
+        (true, true) => LocalCredentialStatus::Enrolled,
+        _ => LocalCredentialStatus::Incomplete,
+    }
+}
+
 #[cfg(all(target_arch = "wasm32", target_os = "unknown"))]
 mod guest {
     mod bindings {
@@ -74,7 +91,10 @@ mod guest {
         });
     }
 
-    use super::{DEFAULT_CLIENT_ID, DEFAULT_TENANT, normalized_capabilities, scopes};
+    use super::{
+        DEFAULT_CLIENT_ID, DEFAULT_TENANT, LocalCredentialStatus, local_credential_status,
+        normalized_capabilities, scopes,
+    };
     use bindings::exports::kyyn::connection::api::{
         AuthChallenge, AuthPollResult, ConnectionStatus, Guest, RequestAuthorization,
     };
@@ -244,13 +264,22 @@ mod guest {
                     "the accepted capability set needs owner sign-in".into(),
                 ));
             }
-            if secrets::get(REFRESH_TOKEN).is_none() {
-                return Ok(ConnectionStatus::NotEnrolled("no local credential".into()));
-            }
-            Ok(match refresh(&config, &capabilities) {
-                Ok(()) => ConnectionStatus::Enrolled("Microsoft account".into()),
-                Err(reason) => ConnectionStatus::Expired(reason),
-            })
+            Ok(
+                match local_credential_status(
+                    secrets::get(ACCESS_TOKEN).is_some(),
+                    secrets::get(REFRESH_TOKEN).is_some(),
+                ) {
+                    LocalCredentialStatus::NotEnrolled => {
+                        ConnectionStatus::NotEnrolled("no local credential".into())
+                    }
+                    LocalCredentialStatus::Incomplete => {
+                        ConnectionStatus::Expired("local credential is incomplete".into())
+                    }
+                    LocalCredentialStatus::Enrolled => {
+                        ConnectionStatus::Enrolled("Microsoft account".into())
+                    }
+                },
+            )
         }
 
         fn authorization(
@@ -358,5 +387,25 @@ mod tests {
         );
         assert!(normalized_capabilities(&["mail-read".into(), "mail-read".into()]).is_err());
         assert!(normalized_capabilities(&["directory-admin".into()]).is_err());
+    }
+
+    #[test]
+    fn status_is_derived_from_local_credential_presence() {
+        assert_eq!(
+            local_credential_status(false, false),
+            LocalCredentialStatus::NotEnrolled
+        );
+        assert_eq!(
+            local_credential_status(true, false),
+            LocalCredentialStatus::Incomplete
+        );
+        assert_eq!(
+            local_credential_status(false, true),
+            LocalCredentialStatus::Incomplete
+        );
+        assert_eq!(
+            local_credential_status(true, true),
+            LocalCredentialStatus::Enrolled
+        );
     }
 }
