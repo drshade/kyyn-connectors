@@ -1,0 +1,58 @@
+package kyyn:configurator@1.0.0;
+
+interface http {
+    enum method { get, post }
+
+    record request {
+        method: method,
+        url: string,
+        headers: list<tuple<string, string>>,
+        body: option<list<u8>>,
+        max-response-bytes: u64,
+        timeout-ms: u64,
+    }
+
+    record response {
+        status: u16,
+        headers: list<tuple<string, string>>,
+        body: list<u8>,
+    }
+
+    enum error-kind { denied-request, timeout, too-large, transport, invalid }
+    record http-error { kind: error-kind, message: string }
+
+    fetch: func(request: request) -> result<response, http-error>;
+}
+
+interface api {
+    record configure-request {
+        /// Closed RON containing only owner-ephemeral and secret fields.
+        ephemeral-config: string,
+        /// Closed RON containing any durable fields entered directly.
+        durable-config: string,
+        /// Governed non-secret config for the selected named connection.
+        connection-config: option<string>,
+    }
+
+    enum diagnostic-class { info, warning, recoverable, fatal }
+
+    record diagnostic {
+        class: diagnostic-class,
+        message: string,
+        detail: option<string>,
+    }
+
+    record configure-output {
+        /// Closed RON containing only manifest-authorized durable fields.
+        durable-config: string,
+        display-summary: string,
+        diagnostics: list<diagnostic>,
+    }
+
+    configure: func(request: configure-request) -> result<configure-output, string>;
+}
+
+world configurator {
+    import http;
+    export api;
+}

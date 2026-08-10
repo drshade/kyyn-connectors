@@ -16,6 +16,7 @@ wasmparser = "=0.251.0"
 [workspace]
 resolver = "2"
 members = [
+    "connectors/configurators/microsoft-files",
     "connectors/connections/microsoft",
     "connectors/connections/salesforce",
     "connectors/sinks/file-replace",
