@@ -17,11 +17,11 @@ Every advertised connector is served by a committed, digest-pinned,
 direction-distinct WebAssembly component. The repository keeps five boundaries
 explicit:
 
-- `wit/source.wit` and `wit/connection.wit` are byte-identical vendorings of
+- `wit/source.wit`, `wit/connection.wit`, and `wit/configurator.wit` are byte-identical vendorings of
   Kyyn's documented contracts. The source guest receives governed non-secret
   connection context when needed, while authorization remains host-only.
   The test gate pins their digests so a hand edit cannot silently change
-  `kyyn:source@1` or `kyyn:connection@1`.
+  `kyyn:source@1`, `kyyn:connection@1`, or `kyyn:configurator@1`.
 - `wit/sink.wit` is the same byte-identical gate for `kyyn:sink@1`; each sink
   component imports exactly its one host-owned write operation
   and has no ambient WASI authority.
@@ -31,8 +31,13 @@ explicit:
   storage; one named Microsoft or Salesforce connection can therefore serve
   several independently configured sources without broadening any source's
   request authority.
+- `connectors/configurators/` contains bounded owner-setup guests. They receive
+  only declared transient and durable fields, can make only manifest-reviewed
+  requests, and return closed durable configuration; provider URLs and
+  diagnostics therefore stay in this repository rather than the Kyyn engine.
 - `components/sources/` and `components/sinks/` contain only direction-explicit
-  executable artifacts consumers pin.
+  executable artifacts consumers pin. `components/configurators/` contains the
+  equally digest-pinned setup guests.
 - `crates/` contains reusable, execution-neutral connector logic consumed by
   component guests; the repository has no native source executable.
 
@@ -40,10 +45,12 @@ explicit:
 its bytes with the committed artifact. Use `--update` only for a deliberate,
 reviewed artifact change, then re-pin every changed digest in `kyyn-connectors.ron`.
 
-`microsoft-files` accepts canonical SharePoint/OneDrive drive and item identity
-resolved inline by Kyyn from an owner-submitted ephemeral browser link. It observes
-that exact file or recursively filters that exact folder through fixed-depth
-GET-only Graph grants. File bytes use the exact
+`microsoft-files` owns the complete SharePoint/OneDrive setup journey. Its
+configurator consumes an owner-ephemeral browser link, resolves it through
+exact GET-only Graph grants, and returns only canonical drive/item identity and
+a safe display name. Kyyn neither recognizes Microsoft URLs nor stores the
+submitted link. The source then observes that exact file or recursively filters
+that exact folder. File bytes use the exact
 `/content` evidence operation with an explicit provider-download continuation:
 Kyyn follows the short-lived preauthenticated URL without returning it or the
 Graph bearer token to the guest. The same named Microsoft connection can be

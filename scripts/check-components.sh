@@ -12,8 +12,10 @@ case "${1:-}" in
 esac
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-repro="$(mktemp -d -p /tmp kyyn-connectors-repro.XXXXXX)"
-trap 'case "$repro" in /tmp/kyyn-connectors-repro.*) rm -rf -- "$repro" ;; esac' EXIT
+scratch_parent="${KYYN_COMPONENT_SCRATCH:-${CARGO_TARGET_DIR:-$repo_root/target}/component-repro}"
+mkdir -p "$scratch_parent/sysroots"
+repro="$(mktemp -d -p "$scratch_parent" kyyn-connectors-repro.XXXXXX)"
+trap 'case "$repro" in "$scratch_parent"/kyyn-connectors-repro.*) rm -rf -- "$repro" ;; esac' EXIT
 
 # rustc's final wasm layout is sensitive to the canonical target-sysroot path
 # even when every embedded path is remapped. Copy the immutable wasm target
@@ -25,10 +27,10 @@ rust_host="$(rustc -vV | sed -n 's/^host: //p')"
 case "${rust_release}-${rust_host}" in
   *[!A-Za-z0-9._-]*) echo "unsafe Rust toolchain identity" >&2; exit 1 ;;
 esac
-stable_sysroot="/tmp/kyyn-component-sysroot-${rust_release}-${rust_host}"
+stable_sysroot="$scratch_parent/sysroots/${rust_release}-${rust_host}"
 stable_target="$stable_sysroot/lib/rustlib/wasm32-unknown-unknown"
 installed_target="$rust_sysroot/lib/rustlib/wasm32-unknown-unknown"
-exec 9>"/tmp/kyyn-component-sysroot.lock"
+exec 9>"$scratch_parent/sysroots.lock"
 flock 9
 if test -L "$stable_sysroot"; then
   echo "$stable_sysroot is a stale symlink; remove it and retry" >&2
@@ -40,7 +42,7 @@ if test -e "$stable_sysroot"; then
     exit 1
   fi
 else
-  staged_sysroot="$(mktemp -d -p /tmp kyyn-component-sysroot-stage.XXXXXX)"
+  staged_sysroot="$(mktemp -d -p "$scratch_parent" kyyn-component-sysroot-stage.XXXXXX)"
   mkdir -p "$staged_sysroot/lib/rustlib"
   cp -a "$installed_target" "$staged_sysroot/lib/rustlib/"
   mv "$staged_sysroot" "$stable_sysroot"
@@ -50,9 +52,11 @@ flock -u 9
 source_guests="sweep git-repo pack salesforce graph-calendar graph-mail graph-chats graph-meetings microsoft-files"
 sink_guests="file-replace git-ref microsoft-file-replace"
 connection_guests="microsoft-connection salesforce-connection"
+configurator_guests="microsoft-files"
 source_packages=""
 sink_packages=""
 connection_packages=""
+configurator_packages=""
 for guest in $source_guests; do
   source_packages="$source_packages -p kyyn-component-$guest"
 done
@@ -61,6 +65,9 @@ for guest in $sink_guests; do
 done
 for guest in $connection_guests; do
   connection_packages="$connection_packages -p kyyn-component-$guest"
+done
+for guest in $configurator_guests; do
+  configurator_packages="$configurator_packages -p kyyn-configurator-$guest"
 done
 
 (
@@ -88,11 +95,19 @@ done
   cargo build --locked --quiet --release --target wasm32-unknown-unknown $connection_packages
   cargo clippy --locked --quiet --release --target wasm32-unknown-unknown \
       $connection_packages -- -D warnings
+
+  export CARGO_TARGET_WASM32_UNKNOWN_UNKNOWN_RUSTFLAGS="--sysroot=${stable_sysroot} \
+--remap-path-prefix=${stable_sysroot}=/rust \
+-C metadata=kyyn-first-party-configurator-v1"
+  cargo build --locked --quiet --release --target wasm32-unknown-unknown $configurator_packages
+  cargo clippy --locked --quiet --release --target wasm32-unknown-unknown \
+      $configurator_packages -- -D warnings
 )
 
 mkdir -p "$repo_root/components/sources"
 mkdir -p "$repo_root/components/sinks"
 mkdir -p "$repo_root/components/connections"
+mkdir -p "$repo_root/components/configurators"
 failed=false
 for guest in $source_guests $sink_guests $connection_guests; do
   crate_name="${guest//-/_}"
@@ -125,6 +140,30 @@ for guest in $source_guests $sink_guests $connection_guests; do
     failed=true
   fi
 done
+for guest in $configurator_guests; do
+  crate_name="${guest//-/_}"
+  core="$repro/wasm32-unknown-unknown/release/kyyn_configurator_${crate_name}.wasm"
+  built="$repro/configurator-${guest}.wasm"
+  cargo run --locked --quiet -p kyyn-connector-componentize -- "$core" "$built"
+
+  leaked="$(LC_ALL=C strings "$built" | grep -E '(/home/|/Users/|\.cargo[/\\]|\.rustup[/\\])' || true)"
+  test -z "$leaked" || {
+    echo "configurator/$guest: component embeds host paths:" >&2
+    echo "$leaked" >&2
+    exit 1
+  }
+
+  committed="$repo_root/components/configurators/${guest}.wasm"
+  digest="$(sha256sum "$built" | cut -d' ' -f1)"
+  if $update; then
+    cp "$built" "$committed"
+    echo "updated components/configurators/${guest}.wasm ($digest)"
+  elif ! cmp -s "$built" "$committed"; then
+    echo "configurator/$guest: committed component is stale (rebuilt $digest)" >&2
+    echo "  run scripts/check-components.sh --update and re-pin kyyn-connectors.ron" >&2
+    failed=true
+  fi
+done
 $failed && exit 1
 
 if $update; then
@@ -141,5 +180,10 @@ if $update; then
       "$direction/$guest" \
       "$(sha256sum "$repo_root/components/${direction}/${guest}.wasm" | cut -d' ' -f1)"
   done
+  for guest in $configurator_guests; do
+    printf '  %-16s %s\n' \
+      "configurators/$guest" \
+      "$(sha256sum "$repo_root/components/configurators/${guest}.wasm" | cut -d' ' -f1)"
+  done
 fi
-echo "components: kyyn:source@1, kyyn:sink@1 and kyyn:connection@1 guests compile and componentize reproducibly"
+echo "components: source, sink, connection and configurator guests compile and componentize reproducibly"

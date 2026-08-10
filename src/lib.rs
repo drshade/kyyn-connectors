@@ -50,6 +50,8 @@ mod contract {
         component_sha256: String,
         #[serde(default)]
         config: Vec<ConfigField>,
+        #[serde(default)]
+        configurator: Option<Configurator>,
     }
 
     #[derive(Deserialize)]
@@ -107,6 +109,7 @@ mod contract {
     enum Purpose {
         Observe,
         Authenticate,
+        Configure,
     }
 
     #[derive(Deserialize)]
@@ -144,6 +147,8 @@ mod contract {
     #[serde(deny_unknown_fields)]
     struct ConfigField {
         name: String,
+        #[serde(default)]
+        label: Option<String>,
         doc: String,
         #[serde(default)]
         ty: ConfigType,
@@ -153,6 +158,42 @@ mod contract {
         example: Option<String>,
         #[serde(default)]
         default: Option<String>,
+        #[serde(default)]
+        custody: ConfigCustody,
+        #[serde(default)]
+        control: ConfigControl,
+    }
+
+    #[derive(Debug, Default, Deserialize, PartialEq, Eq)]
+    enum ConfigCustody {
+        #[default]
+        Durable,
+        Ephemeral,
+        Secret,
+    }
+
+    #[derive(Debug, Default, Deserialize, PartialEq, Eq)]
+    enum ConfigControl {
+        #[default]
+        Text,
+        ResourceLink,
+        Choice {
+            options: Vec<String>,
+        },
+        Path,
+    }
+
+    #[derive(Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct Configurator {
+        world: String,
+        component: String,
+        component_sha256: String,
+        #[serde(default)]
+        requests: Vec<RequestGrant>,
+        produces: Vec<String>,
+        max_input_bytes: u64,
+        max_output_bytes: u64,
     }
 
     fn manifest() -> Manifest {
@@ -231,6 +272,7 @@ mod contract {
                     connection.name,
                     field.name
                 );
+                let _ = (&field.label, &field.custody, &field.control);
             }
             for grant in &connection.requests {
                 assert!(matches!(grant.purpose, Purpose::Authenticate));
@@ -368,12 +410,27 @@ mod contract {
                     field.name
                 );
                 let _ = &field.default;
+                if let ConfigControl::Choice { options } = &field.control {
+                    assert!(
+                        !options.is_empty(),
+                        "{}#{} has no choices",
+                        source.name,
+                        field.name
+                    );
+                }
+                if field.custody != ConfigCustody::Durable {
+                    assert!(
+                        field.default.is_none(),
+                        "transient config cannot have a default"
+                    );
+                }
             }
             for grant in &source.capabilities.requests {
                 assert!(grant.path.starts_with('/'), "{} request path", source.name);
                 match grant.purpose {
                     Purpose::Observe => assert!(matches!(grant.method, Method::Get)),
                     Purpose::Authenticate => assert!(matches!(grant.method, Method::Post)),
+                    Purpose::Configure => panic!("source execution grants cannot configure"),
                 }
                 if matches!(grant.authorization, Authorization::Connection) {
                     assert!(
@@ -415,6 +472,42 @@ mod contract {
                     assert!(!grant.authority.ends_with('/'));
                 }
             }
+            if let Some(configurator) = &source.configurator {
+                assert_eq!(configurator.world, "kyyn:configurator@1");
+                assert!(
+                    configurator
+                        .component
+                        .starts_with("components/configurators/")
+                );
+                assert_eq!(configurator.component_sha256.len(), 64);
+                assert!(configurator.max_input_bytes > 0);
+                assert!(configurator.max_output_bytes > 0);
+                assert!(source.config.iter().any(|field| {
+                    matches!(
+                        field.custody,
+                        ConfigCustody::Ephemeral | ConfigCustody::Secret
+                    )
+                }));
+                let produced = configurator.produces.iter().collect::<HashSet<_>>();
+                assert_eq!(produced.len(), configurator.produces.len());
+                for name in &configurator.produces {
+                    assert!(source.config.iter().any(|field| {
+                        field.name == *name && field.custody == ConfigCustody::Durable
+                    }));
+                }
+                for grant in &configurator.requests {
+                    assert!(matches!(grant.purpose, Purpose::Configure));
+                    assert!(matches!(grant.authorization, Authorization::Connection));
+                    assert!(matches!(grant.method, Method::Get));
+                    assert_eq!(grant.continuation, Continuation::None);
+                    assert!(grant.authority.starts_with("https://"));
+                    assert!(grant.path.starts_with('/'));
+                    if grant.path.contains("{path}") {
+                        assert!(grant.path.ends_with("/{path}"));
+                        assert_eq!(grant.path.matches("{path}").count(), 1);
+                    }
+                }
+            }
         }
 
         let microsoft_files = manifest
@@ -427,6 +520,21 @@ mod contract {
             microsoft_files.connection.as_ref().unwrap().capabilities,
             ["files-read"]
         );
+        let configurator = microsoft_files
+            .configurator
+            .as_ref()
+            .expect("Microsoft files has a connector-owned configurator");
+        assert_eq!(
+            configurator.produces,
+            ["drive_id", "item_id", "item_kind", "display_name"]
+        );
+        let link = microsoft_files
+            .config
+            .iter()
+            .find(|field| field.name == "resource_link")
+            .expect("resource link field");
+        assert_eq!(link.custody, ConfigCustody::Ephemeral);
+        assert_eq!(link.control, ConfigControl::ResourceLink);
         assert_eq!(
             microsoft_files
                 .capabilities
@@ -549,6 +657,18 @@ mod contract {
                 "{} has a stale component_sha256 pin",
                 source.name
             );
+            if let Some(configurator) = source.configurator {
+                let path =
+                    std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join(&configurator.component);
+                let bytes = std::fs::read(&path)
+                    .unwrap_or_else(|error| panic!("reading {}: {error}", path.display()));
+                assert_eq!(
+                    format!("{:x}", sha2::Sha256::digest(bytes)),
+                    configurator.component_sha256,
+                    "{} has a stale configurator component_sha256 pin",
+                    source.name
+                );
+            }
         }
         for sink in manifest.sinks {
             let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join(&sink.component);
@@ -594,6 +714,16 @@ mod contract {
             ),
             FROZEN_CONNECTION_WIT_SHA256,
             "wit/connection.wit drifted from kyyn's frozen kyyn:connection@1 contract"
+        );
+        const FROZEN_CONFIGURATOR_WIT_SHA256: &str =
+            "dbc345c42d3d4586e71cf006390c9c852673febe08694e2a6c13b6eeeb261907";
+        assert_eq!(
+            format!(
+                "{:x}",
+                sha2::Sha256::digest(include_bytes!("../wit/configurator.wit"))
+            ),
+            FROZEN_CONFIGURATOR_WIT_SHA256,
+            "wit/configurator.wit drifted from kyyn's frozen kyyn:configurator@1 contract"
         );
     }
 
@@ -684,6 +814,39 @@ mod contract {
                 "{} imports undeclared capabilities {excess:?}; imports={imports:?}, allowed={allowed:?}",
                 source.name
             );
+            if let Some(configurator) = source.configurator {
+                let path =
+                    std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join(&configurator.component);
+                let bytes = std::fs::read(&path)
+                    .unwrap_or_else(|error| panic!("reading {}: {error}", path.display()));
+                let mut level = 0usize;
+                let mut imports = BTreeSet::new();
+                for payload in wasmparser::Parser::new(0).parse_all(&bytes) {
+                    match payload.unwrap_or_else(|error| {
+                        panic!("parsing {} configurator component: {error}", source.name)
+                    }) {
+                        wasmparser::Payload::Version { .. } => level += 1,
+                        wasmparser::Payload::End(_) => level -= 1,
+                        wasmparser::Payload::ComponentImportSection(section) if level == 1 => {
+                            for import in section {
+                                let name = import.expect("component import").name.name;
+                                let interface = name
+                                    .strip_prefix("kyyn:configurator/")
+                                    .and_then(|name| name.split('@').next())
+                                    .unwrap_or(name);
+                                imports.insert(interface.to_string());
+                            }
+                        }
+                        _ => {}
+                    }
+                }
+                assert_eq!(
+                    imports,
+                    BTreeSet::from(["http".into()]),
+                    "{} configurator must import only bounded HTTP",
+                    source.name
+                );
+            }
         }
 
         for sink in manifest.sinks {
