@@ -97,73 +97,48 @@ interface git-ref {
     ) -> result<transition-outcome, host-failure>;
 }
 
-/// One host-bound Microsoft file creation/replacement. Drive, item, parent,
-/// filename, realm, Graph URLs and credentials are deliberately absent.
-interface microsoft-file-replace {
-    record present-state {
-        item-id: string,
-        etag: string,
-        sha256: string,
-        bytes: u64,
+/// One host-bound remote request. Provider resource identities, realms, URLs
+/// and credentials are deliberately absent from the guest-selected operation.
+interface request {
+    enum body-source {
+        none,
+        /// The exact payload bytes from the accepted effect envelope. The
+        /// guest selects this source but never supplies or transforms bytes.
+        accepted-artifact,
     }
 
-    variant expected-state {
-        absent,
-        present(present-state),
+    record operation {
+        /// Immutable request-grant name from the pinned connector manifest.
+        grant: string,
+        /// Only names reviewed by that grant are accepted. Credentials,
+        /// authority, method, path and framing always remain host-owned.
+        headers: list<tuple<string, string>>,
+        body: body-source,
     }
 
-    record applied {
-        previous-sha256: string,
-        resulting-sha256: string,
-        item-id: string,
-        etag: string,
-        bytes: u64,
+    record response {
+        status: u16,
+        headers: list<tuple<string, string>>,
+        body: list<u8>,
     }
 
-    record created {
-        resulting-sha256: string,
-        item-id: string,
-        etag: string,
-        bytes: u64,
+    enum error-kind {
+        denied-request,
+        timeout,
+        too-large,
+        transport,
+        invalid,
     }
 
-    record already-converged {
-        resulting-sha256: string,
-        item-id: string,
-        etag: string,
-        bytes: u64,
-    }
-
-    record conflict {
-        expected-sha256: string,
-        observed-sha256: option<string>,
-    }
-
-    record create-conflict {
-        observed-sha256: string,
-    }
-
-    variant replace-outcome {
-        applied(applied),
-        created(created),
-        already-converged(already-converged),
-        conflict(conflict),
-        create-conflict(create-conflict),
-    }
-
-    record host-failure {
-        code: string,
+    record request-error {
+        kind: error-kind,
         message: string,
-        retryable: bool,
     }
 
-    /// Compare the host-bound logical Microsoft file with the reviewed state,
-    /// upload at most once, then confirm the resulting bytes. The host also
-    /// binds this claim and replacement to the accepted effect envelope.
-    replace: func(
-        expected: expected-state,
-        replacement: list<u8>,
-    ) -> result<replace-outcome, host-failure>;
+    /// Execute one exact host-resolved operation. Request authority is derived
+    /// only from the accepted connector pin, sink config, named connection and
+    /// effect artifact; no guest-selected URL or request bytes cross the ABI.
+    fetch: func(operation: operation) -> result<response, request-error>;
 }
 
 /// Direction-distinct sink behaviour. These exports carry no authority by
@@ -196,14 +171,48 @@ interface api {
         summary: string,
     }
 
-    record apply-report {
-        /// Bounded non-authoritative guest note. The engine constructs the
-        /// authoritative outcome only from the host operation it observed.
+    record target-observation {
+        /// Connector-defined bounded state, frozen into the intended effect.
+        expected-target: string,
+        destination: string,
+        summary: string,
+    }
+
+    record observed-outcome {
+        /// Connector-defined bounded post-operation state.
+        observed-state: string,
         note: string,
+    }
+
+    record conflict-outcome {
+        observed-state: string,
+        message: string,
+    }
+
+    record failed-outcome {
+        code: string,
+        message: string,
+        retryable: bool,
+    }
+
+    variant outcome {
+        applied(observed-outcome),
+        already-converged(observed-outcome),
+        conflict(conflict-outcome),
+        failed(failed-outcome),
+    }
+
+    record apply-report {
+        /// Provider semantics reported by the connector. The engine records
+        /// this separately from its own request/artifact attestations.
+        outcome: outcome,
     }
 
     describe: func() -> connector-describe;
     validate-config: func(config: string) -> result<_, string>;
+    /// Remote connectors observe through request grants. Specialized local
+    /// primitives return an error here because their host owns observation.
+    observe: func(config: string) -> result<target-observation, string>;
     validate-effect: func(effect: effect) -> result<_, string>;
     render-effect: func(effect: effect) -> result<effect-rendering, string>;
     apply: func(effect: effect) -> result<apply-report, string>;
@@ -222,9 +231,9 @@ world git-ref-sink {
     export api;
 }
 
-/// Direction- and effect-distinct Microsoft publication guest.
-world microsoft-file-sink {
-    import microsoft-file-replace;
+/// Provider-neutral remote publication guest.
+world remote-sink {
+    import request;
     export api;
 }
 
@@ -233,6 +242,6 @@ world microsoft-file-sink {
 world host-sink {
     import file-replace;
     import git-ref;
-    import microsoft-file-replace;
+    import request;
     export api;
 }
