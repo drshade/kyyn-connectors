@@ -66,7 +66,57 @@ mod contract {
         #[serde(default)]
         connection: Option<ConnectionRequirement>,
         #[serde(default)]
+        capabilities: SinkCapabilities,
+        #[serde(default)]
         config: Vec<ConfigField>,
+        #[serde(default)]
+        configurator: Option<Configurator>,
+    }
+
+    #[derive(Default, Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct SinkCapabilities {
+        #[serde(default)]
+        requests: Vec<SinkRequestGrant>,
+    }
+
+    #[derive(Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct SinkRequestGrant {
+        name: String,
+        phase: SinkRequestPhase,
+        authorization: Authorization,
+        authority: String,
+        method: SinkMethod,
+        path: String,
+        #[serde(default)]
+        path_bindings: Vec<String>,
+        body: SinkRequestBody,
+        #[serde(default)]
+        continuation: Continuation,
+        #[serde(default)]
+        headers: Vec<String>,
+        max_response_bytes: u64,
+        timeout_ms: u64,
+        max_operations: u32,
+    }
+
+    #[derive(Deserialize)]
+    enum SinkRequestPhase {
+        Observe,
+        Apply,
+    }
+
+    #[derive(Deserialize)]
+    enum SinkMethod {
+        Get,
+        Put,
+    }
+
+    #[derive(Deserialize)]
+    enum SinkRequestBody {
+        None,
+        AcceptedArtifact,
     }
 
     #[derive(Deserialize)]
@@ -569,6 +619,32 @@ mod contract {
                         .all(|capability| provider.capabilities.contains(capability))
                 );
             }
+            let mut request_names = HashSet::new();
+            for grant in &sink.capabilities.requests {
+                assert!(
+                    request_names.insert(&grant.name),
+                    "duplicate sink request grant"
+                );
+                assert!(!grant.authority.trim().is_empty());
+                assert!(grant.path.starts_with('/'));
+                assert!(grant.max_response_bytes > 0);
+                assert!(grant.timeout_ms > 0);
+                assert!(grant.max_operations > 0);
+                let _ = (&grant.authorization, &grant.path_bindings, &grant.headers);
+                match (&grant.phase, &grant.method, &grant.body) {
+                    (SinkRequestPhase::Observe, SinkMethod::Get, SinkRequestBody::None)
+                    | (
+                        SinkRequestPhase::Apply,
+                        SinkMethod::Put,
+                        SinkRequestBody::AcceptedArtifact,
+                    ) => {}
+                    _ => panic!("{} has an incoherent sink request grant", sink.name),
+                }
+                if grant.continuation == Continuation::ProviderDownload {
+                    assert!(matches!(&grant.phase, SinkRequestPhase::Observe));
+                    assert!(matches!(&grant.method, SinkMethod::Get));
+                }
+            }
             let mut fields = HashSet::new();
             for field in &sink.config {
                 assert!(
@@ -626,7 +702,9 @@ mod contract {
             microsoft.component,
             "components/sinks/microsoft-file-replace.wasm"
         );
-        assert!(microsoft.config.is_empty());
+        assert!(!microsoft.config.is_empty());
+        assert!(microsoft.configurator.is_some());
+        assert!(!microsoft.capabilities.requests.is_empty());
         assert_eq!(
             microsoft.connection.as_ref().unwrap().capabilities,
             ["files-write"]
@@ -696,7 +774,7 @@ mod contract {
             "wit/source.wit drifted from kyyn's frozen kyyn:source@1 contract"
         );
         const FROZEN_SINK_WIT_SHA256: &str =
-            "0e70eda60f3bb3834a5ce18144dd56bd66480f8ed8681624fd5b49b84c788968";
+            "76bca92a2c69b8b350d3c26e1851709e670bcc66fdf52855230d5402bb3ead30";
         assert_eq!(
             format!(
                 "{:x}",
@@ -874,7 +952,11 @@ mod contract {
                     _ => {}
                 }
             }
-            let expected = BTreeSet::from([sink.name.clone()]);
+            let expected = if sink.capabilities.requests.is_empty() {
+                BTreeSet::from([sink.name.clone()])
+            } else {
+                BTreeSet::from(["request".to_string()])
+            };
             assert_eq!(
                 imports, expected,
                 "{} must import exactly its one host effect operation",

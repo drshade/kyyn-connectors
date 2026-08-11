@@ -365,6 +365,25 @@ fn safe_display(value: &str) -> Result<(), String> {
     Ok(())
 }
 
+fn durable_string(text: &str, name: &str) -> Option<String> {
+    let ron::Value::Map(map) = ron::from_str::<ron::Value>(text).ok()? else {
+        return None;
+    };
+    map.iter().find_map(|(key, value)| match (key, value) {
+        (ron::Value::String(key), ron::Value::String(value)) if key == name => Some(value.clone()),
+        _ => None,
+    })
+}
+
+fn safe_filename(value: &str) -> bool {
+    !value.is_empty()
+        && value.len() <= 255
+        && !matches!(value, "." | "..")
+        && !value
+            .chars()
+            .any(|character| character.is_control() || "\\/:*?\"<>|".contains(character))
+}
+
 fn locator(
     item: GraphDriveItem,
     fallback_drive_id: Option<String>,
@@ -526,11 +545,29 @@ mod guest {
             let raw = RawLink::parse(&input.resource_link)?;
             let family = raw.family;
             let durable = resolve(raw.resolution())?;
-            let summary = format!(
-                "Resolved {} item '{}'",
-                family.label(),
-                durable.display_name
-            );
+            let summary = match durable_string(&request.durable_config, "target_mode").as_deref() {
+                Some("existing-file") if durable.item_kind == "file" => {
+                    durable.display_name.clone()
+                }
+                Some("folder-child") if durable.item_kind == "folder" => {
+                    let filename = durable_string(&request.durable_config, "filename")
+                        .filter(|value| safe_filename(value))
+                        .ok_or_else(|| "Folder output requires a safe filename".to_string())?;
+                    format!("{}/{}", durable.display_name, filename)
+                }
+                Some("existing-file") => {
+                    return Err("Replace this file requires a file link".into());
+                }
+                Some("folder-child") => {
+                    return Err("Create in this folder requires a folder link".into());
+                }
+                Some(_) => return Err("Output target mode is invalid".into()),
+                None => format!(
+                    "Resolved {} item '{}'",
+                    family.label(),
+                    durable.display_name
+                ),
+            };
             Ok(ConfigureOutput {
                 durable_config: ron::ser::to_string(&durable)
                     .map_err(|_| "could not encode resolved Microsoft identity".to_string())?,

@@ -11,7 +11,8 @@ mod guest {
     }
 
     use bindings::exports::kyyn::sink::api::{
-        ApplyReport, ConnectorDescribe, Effect, EffectRendering, Guest,
+        ApplyReport, ConflictOutcome, ConnectorDescribe, Effect, EffectRendering, Guest,
+        ObservedOutcome, Outcome, TargetObservation,
     };
     use bindings::kyyn::sink::file_replace;
 
@@ -65,6 +66,10 @@ mod guest {
             config(&config_text).map(|_| ())
         }
 
+        fn observe(_config_text: String) -> Result<TargetObservation, String> {
+            Err("file target observation is host-owned".into())
+        }
+
         fn validate_effect(effect: Effect) -> Result<(), String> {
             validate(&effect).map(|_| ())
         }
@@ -92,29 +97,51 @@ mod guest {
             validate(&effect)?;
             let result = file_replace::replace(&effect.expected_target, &effect.payload)
                 .map_err(|failure| format!("{}: {}", failure.code, failure.message))?;
-            let note = match result {
-                file_replace::ReplaceOutcome::Applied(observed) => format!(
-                    "applied {} -> {} ({} byte(s))",
-                    observed.previous_sha256, observed.resulting_sha256, observed.bytes
-                ),
-                file_replace::ReplaceOutcome::Created(observed) => format!(
-                    "created {} ({} byte(s))",
-                    observed.resulting_sha256, observed.bytes
-                ),
-                file_replace::ReplaceOutcome::AlreadyConverged(observed) => format!(
-                    "already converged at {} ({} byte(s))",
-                    observed.resulting_sha256, observed.bytes
-                ),
-                file_replace::ReplaceOutcome::Conflict(observed) => format!(
-                    "conflict: expected {}, observed {}",
-                    observed.expected_sha256, observed.observed_sha256
-                ),
-                file_replace::ReplaceOutcome::CreateConflict(observed) => format!(
-                    "conflict: expected absent, observed {}",
-                    observed.observed_sha256
-                ),
+            let outcome = match result {
+                file_replace::ReplaceOutcome::Applied(observed) => {
+                    Outcome::Applied(ObservedOutcome {
+                        observed_state: observed.resulting_sha256.clone(),
+                        note: format!(
+                            "applied {} -> {} ({} byte(s))",
+                            observed.previous_sha256, observed.resulting_sha256, observed.bytes
+                        ),
+                    })
+                }
+                file_replace::ReplaceOutcome::Created(observed) => {
+                    Outcome::Applied(ObservedOutcome {
+                        observed_state: observed.resulting_sha256.clone(),
+                        note: format!(
+                            "created {} ({} byte(s))",
+                            observed.resulting_sha256, observed.bytes
+                        ),
+                    })
+                }
+                file_replace::ReplaceOutcome::AlreadyConverged(observed) => {
+                    Outcome::AlreadyConverged(ObservedOutcome {
+                        observed_state: observed.resulting_sha256.clone(),
+                        note: format!(
+                            "already converged at {} ({} byte(s))",
+                            observed.resulting_sha256, observed.bytes
+                        ),
+                    })
+                }
+                file_replace::ReplaceOutcome::Conflict(observed) => {
+                    Outcome::Conflict(ConflictOutcome {
+                        observed_state: observed.observed_sha256.clone(),
+                        message: format!(
+                            "expected {}, observed {}",
+                            observed.expected_sha256, observed.observed_sha256
+                        ),
+                    })
+                }
+                file_replace::ReplaceOutcome::CreateConflict(observed) => {
+                    Outcome::Conflict(ConflictOutcome {
+                        observed_state: observed.observed_sha256.clone(),
+                        message: format!("expected absent, observed {}", observed.observed_sha256),
+                    })
+                }
             };
-            Ok(ApplyReport { note })
+            Ok(ApplyReport { outcome })
         }
     }
 

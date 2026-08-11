@@ -11,7 +11,8 @@ mod guest {
     }
 
     use bindings::exports::kyyn::sink::api::{
-        ApplyReport, ConnectorDescribe, Effect, EffectRendering, Guest,
+        ApplyReport, ConflictOutcome, ConnectorDescribe, Effect, EffectRendering, Guest,
+        ObservedOutcome, Outcome, TargetObservation,
     };
     use bindings::kyyn::sink::git_ref;
 
@@ -112,6 +113,10 @@ mod guest {
             config(&config_text).map(|_| ())
         }
 
+        fn observe(_config_text: String) -> Result<TargetObservation, String> {
+            Err("Git ref observation is host-owned".into())
+        }
+
         fn validate_effect(effect: Effect) -> Result<(), String> {
             validate(&effect).map(|_| ())
         }
@@ -137,26 +142,37 @@ mod guest {
                 &effect.payload,
             )
             .map_err(|failure| format!("{}: {}", failure.code, failure.message))?;
-            let note = match result {
-                git_ref::TransitionOutcome::Applied(observed) => format!(
-                    "applied {} -> {}",
-                    observed.previous_oid, observed.resulting_oid
-                ),
+            let outcome = match result {
+                git_ref::TransitionOutcome::Applied(observed) => {
+                    Outcome::Applied(ObservedOutcome {
+                        observed_state: observed.resulting_oid.clone(),
+                        note: format!(
+                            "applied {} -> {}",
+                            observed.previous_oid, observed.resulting_oid
+                        ),
+                    })
+                }
                 git_ref::TransitionOutcome::AlreadyConverged(observed) => {
-                    format!("already converged at {}", observed.resulting_oid)
+                    Outcome::AlreadyConverged(ObservedOutcome {
+                        observed_state: observed.resulting_oid.clone(),
+                        note: format!("already converged at {}", observed.resulting_oid),
+                    })
                 }
                 git_ref::TransitionOutcome::Conflict(observed) => match observed.observed_oid {
-                    Some(oid) => format!(
-                        "conflict: expected {}, observed {}",
-                        observed.expected_oid, oid
-                    ),
-                    None => format!(
-                        "conflict: expected {}, observed absent branch",
-                        observed.expected_oid
-                    ),
+                    Some(oid) => Outcome::Conflict(ConflictOutcome {
+                        observed_state: oid.clone(),
+                        message: format!("expected {}, observed {}", observed.expected_oid, oid),
+                    }),
+                    None => Outcome::Conflict(ConflictOutcome {
+                        observed_state: "absent".into(),
+                        message: format!(
+                            "expected {}, observed absent branch",
+                            observed.expected_oid
+                        ),
+                    }),
                 },
             };
-            Ok(ApplyReport { note })
+            Ok(ApplyReport { outcome })
         }
     }
 

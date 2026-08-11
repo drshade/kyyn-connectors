@@ -378,6 +378,8 @@ version = "0.1.0"
 dependencies = [
  "ron",
  "serde",
+ "serde_json",
+ "sha2",
  "wit-bindgen",
 ]
 
