@@ -2,6 +2,73 @@
 //! pinned connector guest. The host supplies only exact reviewed request
 //! grants, named-connection authorization and the accepted artifact bytes.
 
+#[cfg(any(test, all(target_arch = "wasm32", target_os = "unknown")))]
+use serde::Deserialize;
+
+#[cfg(any(test, all(target_arch = "wasm32", target_os = "unknown")))]
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct Config {
+    drive_id: String,
+    item_id: String,
+    item_kind: String,
+    display_name: String,
+    target_mode: String,
+    filename: Option<String>,
+}
+
+#[cfg(any(test, all(target_arch = "wasm32", target_os = "unknown")))]
+fn safe_token(value: &str) -> bool {
+    !value.is_empty()
+        && value.len() <= 512
+        && value
+            .bytes()
+            .all(|byte| byte.is_ascii_graphic() && !matches!(byte, b'/' | b'\\'))
+}
+
+#[cfg(any(test, all(target_arch = "wasm32", target_os = "unknown")))]
+fn safe_display(value: &str) -> bool {
+    !value.trim().is_empty() && value.len() <= 512 && !value.chars().any(char::is_control)
+}
+
+#[cfg(any(test, all(target_arch = "wasm32", target_os = "unknown")))]
+fn safe_filename(value: &str) -> bool {
+    !value.is_empty()
+        && value.len() <= 255
+        && !matches!(value, "." | "..")
+        && !value
+            .chars()
+            .any(|character| character.is_control() || "\\/:*?\"<>|".contains(character))
+}
+
+#[cfg(any(test, all(target_arch = "wasm32", target_os = "unknown")))]
+fn config(text: &str) -> Result<Config, String> {
+    let value: ron::Value = ron::from_str(text).map_err(|_| "invalid config".to_string())?;
+    let config: Config = value
+        .into_rust()
+        .map_err(|_| "invalid config".to_string())?;
+    if !safe_token(&config.drive_id)
+        || !safe_token(&config.item_id)
+        || !safe_display(&config.display_name)
+    {
+        return Err("resolved resource identity is invalid".into());
+    }
+    match config.target_mode.as_str() {
+        "existing-file" if config.item_kind == "file" && config.filename.is_none() => {}
+        "folder-child"
+            if config.item_kind == "folder"
+                && config.filename.as_deref().is_some_and(safe_filename) => {}
+        "existing-file" => {
+            return Err("existing-file requires a resolved file and no filename".into());
+        }
+        "folder-child" => {
+            return Err("folder-child requires a resolved folder and safe filename".into());
+        }
+        _ => return Err("target_mode must be existing-file or folder-child".into()),
+    }
+    Ok(config)
+}
+
 #[cfg(all(target_arch = "wasm32", target_os = "unknown"))]
 mod guest {
     mod bindings {
@@ -11,6 +78,7 @@ mod guest {
         });
     }
 
+    use super::{Config, config, safe_display, safe_token};
     use bindings::exports::kyyn::sink::api::{
         ApplyReport, ConflictOutcome, ConnectorDescribe, Effect, EffectRendering, FailedOutcome,
         Guest, ObservedOutcome, Outcome, TargetObservation,
@@ -20,17 +88,6 @@ mod guest {
     use sha2::{Digest, Sha256};
 
     const MAX_ARTIFACT_BYTES: usize = 16 * 1024 * 1024;
-
-    #[derive(Deserialize)]
-    #[serde(deny_unknown_fields)]
-    struct Config {
-        drive_id: String,
-        item_id: String,
-        item_kind: String,
-        display_name: String,
-        target_mode: String,
-        filename: Option<String>,
-    }
 
     #[derive(Clone, Debug, Deserialize, Serialize)]
     enum Expected {
@@ -60,51 +117,6 @@ mod guest {
             sha256: String,
             bytes: u64,
         },
-    }
-
-    fn safe_token(value: &str) -> bool {
-        !value.is_empty()
-            && value.len() <= 512
-            && value
-                .bytes()
-                .all(|byte| byte.is_ascii_graphic() && !matches!(byte, b'/' | b'\\'))
-    }
-
-    fn safe_display(value: &str) -> bool {
-        !value.trim().is_empty() && value.len() <= 512 && !value.chars().any(char::is_control)
-    }
-
-    fn safe_filename(value: &str) -> bool {
-        !value.is_empty()
-            && value.len() <= 255
-            && !matches!(value, "." | "..")
-            && !value
-                .chars()
-                .any(|character| character.is_control() || "\\/:*?\"<>|".contains(character))
-    }
-
-    fn config(text: &str) -> Result<Config, String> {
-        let config: Config = ron::from_str(text).map_err(|_| "invalid config".to_string())?;
-        if !safe_token(&config.drive_id)
-            || !safe_token(&config.item_id)
-            || !safe_display(&config.display_name)
-        {
-            return Err("resolved resource identity is invalid".into());
-        }
-        match config.target_mode.as_str() {
-            "existing-file" if config.item_kind == "file" && config.filename.is_none() => {}
-            "folder-child"
-                if config.item_kind == "folder"
-                    && config.filename.as_deref().is_some_and(safe_filename) => {}
-            "existing-file" => {
-                return Err("existing-file requires a resolved file and no filename".into());
-            }
-            "folder-child" => {
-                return Err("folder-child requires a resolved folder and safe filename".into());
-            }
-            _ => return Err("target_mode must be existing-file or folder-child".into()),
-        }
-        Ok(config)
     }
 
     fn destination(config: &Config) -> String {
@@ -386,4 +398,48 @@ mod guest {
     }
 
     bindings::export!(MicrosoftFileReplace with_types_in bindings);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::config;
+
+    const ENGINE_MAP: &str = r#"{
+        "display_name": "report.txt",
+        "drive_id": "b!reviewed-drive",
+        "item_id": "01REVIEWEDITEM",
+        "item_kind": "file",
+        "target_mode": "existing-file",
+    }"#;
+
+    #[test]
+    fn accepts_engine_serialized_value_map() {
+        let parsed = config(ENGINE_MAP).unwrap();
+        assert_eq!(parsed.display_name, "report.txt");
+        assert_eq!(parsed.target_mode, "existing-file");
+    }
+
+    #[test]
+    fn retains_struct_form_compatibility() {
+        config(
+            r#"(
+                drive_id: "b!reviewed-drive",
+                item_id: "01REVIEWEDITEM",
+                item_kind: "folder",
+                display_name: "Reports",
+                target_mode: "folder-child",
+                filename: Some("report.txt"),
+            )"#,
+        )
+        .unwrap();
+    }
+
+    #[test]
+    fn engine_map_still_rejects_unknown_fields() {
+        let invalid = ENGINE_MAP.replace(
+            "\"target_mode\": \"existing-file\",",
+            "\"target_mode\": \"existing-file\", \"retarget\": \"elsewhere\",",
+        );
+        assert_eq!(config(&invalid).unwrap_err(), "invalid config");
+    }
 }

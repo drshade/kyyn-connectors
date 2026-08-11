@@ -197,7 +197,7 @@
          world: "kyyn:sink@1", delivery: Convergent,
          connection: (provider: "microsoft", capabilities: ["files-write"]),
          component: "components/sinks/microsoft-file-replace.wasm",
-         component_sha256: "4d1a4c50066c3e42e3f94a67b4afced629195b1e85ce8ddffa143c1faeac88f4",
+         component_sha256: "272853d4e33b904692fedc329def60f258cdbf17a7e3fbe6de828640d24b9b74",
          capabilities: (requests: [
             (name: "existing-metadata", phase: Observe, authorization: Connection,
              authority: "https://graph.microsoft.com", method: Get,
