@@ -27,6 +27,10 @@ mod contract {
         component_sha256: String,
         #[serde(default)]
         capabilities: Vec<String>,
+        #[serde(default = "delegated_human_only")]
+        principal_classes: Vec<ConnectionPrincipalClass>,
+        #[serde(default)]
+        workload_recipes: Vec<ConnectionWorkloadRecipe>,
         #[serde(default)]
         requests: Vec<RequestGrant>,
         #[serde(default)]
@@ -124,6 +128,44 @@ mod contract {
     struct ConnectionRequirement {
         provider: String,
         capabilities: Vec<String>,
+        #[serde(default = "delegated_human_only")]
+        principal_classes: Vec<ConnectionPrincipalClass>,
+    }
+
+    #[derive(Clone, Copy, Debug, Deserialize, Eq, Hash, PartialEq)]
+    enum ConnectionPrincipalClass {
+        DelegatedHuman,
+        WorkloadApplication,
+    }
+
+    fn delegated_human_only() -> Vec<ConnectionPrincipalClass> {
+        vec![ConnectionPrincipalClass::DelegatedHuman]
+    }
+
+    #[derive(Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct ConnectionWorkloadRecipe {
+        name: String,
+        summary: String,
+        inputs: Vec<ConnectionWorkloadInput>,
+    }
+
+    #[derive(Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct ConnectionWorkloadInput {
+        name: String,
+        label: String,
+        doc: String,
+        kind: ConnectionWorkloadInputKind,
+        max_bytes: u64,
+    }
+
+    #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq)]
+    enum ConnectionWorkloadInputKind {
+        ClientSecret,
+        PrivateKey,
+        Assertion,
+        AccessToken,
     }
 
     #[derive(Deserialize)]
@@ -303,6 +345,40 @@ mod contract {
                 "{} has duplicate capabilities",
                 connection.name
             );
+            assert!(!connection.principal_classes.is_empty());
+            assert_eq!(
+                connection
+                    .principal_classes
+                    .iter()
+                    .collect::<HashSet<_>>()
+                    .len(),
+                connection.principal_classes.len(),
+                "{} has duplicate principal classes",
+                connection.name
+            );
+            let supports_workload = connection
+                .principal_classes
+                .contains(&ConnectionPrincipalClass::WorkloadApplication);
+            assert_eq!(
+                supports_workload,
+                !connection.workload_recipes.is_empty(),
+                "{} workload class and recipes must be declared together",
+                connection.name
+            );
+            let mut recipe_names = HashSet::new();
+            for recipe in &connection.workload_recipes {
+                assert!(recipe_names.insert(&recipe.name));
+                assert!(!recipe.summary.trim().is_empty());
+                assert!(!recipe.inputs.is_empty());
+                let mut input_names = HashSet::new();
+                for input in &recipe.inputs {
+                    assert!(input_names.insert(&input.name));
+                    assert!(!input.label.trim().is_empty());
+                    assert!(!input.doc.trim().is_empty());
+                    assert!(input.max_bytes > 0);
+                    let _ = input.kind;
+                }
+            }
             let mut fields = HashSet::new();
             for field in &connection.config {
                 assert!(
@@ -382,6 +458,20 @@ mod contract {
                 "https://login.microsoftonline.com",
             ]
         );
+        assert_eq!(
+            microsoft.principal_classes,
+            [
+                ConnectionPrincipalClass::DelegatedHuman,
+                ConnectionPrincipalClass::WorkloadApplication,
+            ]
+        );
+        assert_eq!(microsoft.workload_recipes.len(), 1);
+        assert_eq!(microsoft.workload_recipes[0].name, "client-secret");
+        assert_eq!(microsoft.workload_recipes[0].inputs.len(), 1);
+        assert_eq!(
+            microsoft.workload_recipes[0].inputs[0].kind,
+            ConnectionWorkloadInputKind::ClientSecret
+        );
         let salesforce = manifest
             .connections
             .iter()
@@ -395,6 +485,11 @@ mod contract {
                 "https://test.salesforce.com",
             ]
         );
+        assert_eq!(
+            salesforce.principal_classes,
+            [ConnectionPrincipalClass::DelegatedHuman]
+        );
+        assert!(salesforce.workload_recipes.is_empty());
         let mut names = HashSet::new();
         for source in &manifest.sources {
             assert!(
@@ -428,6 +523,13 @@ mod contract {
                         .all(|capability| provider.capabilities.contains(capability)),
                     "{} asks for an unadvertised connection capability",
                     source.name
+                );
+                assert!(!requirement.principal_classes.is_empty());
+                assert!(
+                    requirement
+                        .principal_classes
+                        .iter()
+                        .all(|class| provider.principal_classes.contains(class))
                 );
                 assert!(source.capabilities.auth.is_none());
                 assert!(
@@ -570,6 +672,31 @@ mod contract {
             microsoft_files.connection.as_ref().unwrap().capabilities,
             ["files-read"]
         );
+        assert_eq!(
+            microsoft_files
+                .connection
+                .as_ref()
+                .unwrap()
+                .principal_classes,
+            [
+                ConnectionPrincipalClass::DelegatedHuman,
+                ConnectionPrincipalClass::WorkloadApplication,
+            ]
+        );
+        assert!(
+            manifest
+                .sources
+                .iter()
+                .filter(|source| {
+                    source.connection.as_ref().is_some_and(|requirement| {
+                        requirement.provider == "microsoft" && source.name != "microsoft-files"
+                    })
+                })
+                .all(
+                    |source| source.connection.as_ref().unwrap().principal_classes
+                        == [ConnectionPrincipalClass::DelegatedHuman]
+                )
+        );
         let configurator = microsoft_files
             .configurator
             .as_ref()
@@ -617,6 +744,13 @@ mod contract {
                         .capabilities
                         .iter()
                         .all(|capability| provider.capabilities.contains(capability))
+                );
+                assert!(!requirement.principal_classes.is_empty());
+                assert!(
+                    requirement
+                        .principal_classes
+                        .iter()
+                        .all(|class| provider.principal_classes.contains(class))
                 );
             }
             let mut request_names = HashSet::new();
@@ -709,6 +843,13 @@ mod contract {
             microsoft.connection.as_ref().unwrap().capabilities,
             ["files-write"]
         );
+        assert_eq!(
+            microsoft.connection.as_ref().unwrap().principal_classes,
+            [
+                ConnectionPrincipalClass::DelegatedHuman,
+                ConnectionPrincipalClass::WorkloadApplication,
+            ]
+        );
     }
 
     #[test]
@@ -784,7 +925,7 @@ mod contract {
             "wit/sink.wit drifted from kyyn's frozen kyyn:sink@1 contract"
         );
         const FROZEN_CONNECTION_WIT_SHA256: &str =
-            "238ca56e8f55feb6f244be50510f3a40bc7d7a694252f11c24dd7cfbda9f6941";
+            "a1c169fdafdfbac80e7d7496bb75fac9b1a5f5c0a7dd7899376f48854a416bcd";
         assert_eq!(
             format!(
                 "{:x}",
@@ -833,9 +974,12 @@ mod contract {
                     _ => {}
                 }
             }
+            let mut expected = BTreeSet::from(["http".into(), "secrets".into()]);
+            if !connection.workload_recipes.is_empty() {
+                expected.insert("invocation-inputs".into());
+            }
             assert_eq!(
-                imports,
-                BTreeSet::from(["http".into(), "secrets".into()]),
+                imports, expected,
                 "{} provider must have only the bounded enrollment host imports",
                 connection.name
             );

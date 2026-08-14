@@ -8,6 +8,7 @@ interface control {
 
 interface http {
     enum method { get, post }
+
     record request {
         method: method,
         url: string,
@@ -16,9 +17,16 @@ interface http {
         max-response-bytes: u64,
         timeout-ms: u64,
     }
-    record response { status: u16, headers: list<tuple<string, string>>, body: list<u8> }
+
+    record response {
+        status: u16,
+        headers: list<tuple<string, string>>,
+        body: list<u8>,
+    }
+
     enum error-kind { denied-request, timeout, too-large, transport, invalid }
     record http-error { kind: error-kind, message: string }
+
     fetch: func(request: request) -> result<response, http-error>;
 }
 
@@ -28,16 +36,41 @@ interface secrets {
     delete: func(name: string);
 }
 
+/// Read-only root credentials bound explicitly for this process invocation.
+/// The host exposes this interface only to reviewed workload-capable provider
+/// components. It never persists values and never grants it to source or sink
+/// guests.
+interface invocation-inputs {
+    recipe: func() -> option<string>;
+    get: func(name: string) -> result<list<u8>, string>;
+}
+
 interface api {
-    variant request-authorization { bearer(string) }
+    /// Request authorization is returned only to the trusted engine host. It
+    /// is never passed through a source or sink component's guest memory.
+    variant request-authorization {
+        bearer(string),
+    }
+
     record auth-challenge {
         verification-url: string,
         user-code: string,
         expires-in-secs: u64,
         handle: string,
     }
-    variant auth-poll-result { pending, done(string), failed(string) }
-    variant connection-status { enrolled(string), not-enrolled(string), expired(string) }
+
+    variant auth-poll-result {
+        pending,
+        done(string),
+        failed(string),
+    }
+
+    variant connection-status {
+        enrolled(string),
+        not-enrolled(string),
+        expired(string),
+    }
+
     validate-config: func(config: string) -> result<_, string>;
     status: func(config: string, capabilities: list<string>) -> result<connection-status, string>;
     authorization: func(config: string, capabilities: list<string>) -> result<request-authorization, string>;
@@ -50,5 +83,6 @@ world connection {
     import control;
     import http;
     import secrets;
+    import invocation-inputs;
     export api;
 }
