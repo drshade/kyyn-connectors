@@ -1,10 +1,38 @@
 #[cfg(any(test, all(target_arch = "wasm32", target_os = "unknown")))]
 use std::collections::BTreeSet;
 
-#[cfg(all(target_arch = "wasm32", target_os = "unknown"))]
+#[cfg(any(test, all(target_arch = "wasm32", target_os = "unknown")))]
 const DEFAULT_TENANT: &str = "organizations";
-#[cfg(all(target_arch = "wasm32", target_os = "unknown"))]
+#[cfg(any(test, all(target_arch = "wasm32", target_os = "unknown")))]
 const DEFAULT_CLIENT_ID: &str = "53ddb21b-849f-45a3-8168-8a0e555f386f";
+#[cfg(all(target_arch = "wasm32", target_os = "unknown"))]
+const CLIENT_SECRET_RECIPE: &str = "client-secret";
+
+#[cfg(any(test, all(target_arch = "wasm32", target_os = "unknown")))]
+fn validate_workload_identity(tenant: &str, client_id: &str) -> Result<(), String> {
+    if ["common", "consumers", DEFAULT_TENANT]
+        .iter()
+        .any(|shared| tenant.eq_ignore_ascii_case(shared))
+    {
+        return Err("Microsoft workload Connections require an explicit tenant".into());
+    }
+    if client_id == DEFAULT_CLIENT_ID {
+        return Err(
+            "Microsoft workload Connections require the owner's explicit application id".into(),
+        );
+    }
+    Ok(())
+}
+
+#[cfg(any(test, all(target_arch = "wasm32", target_os = "unknown")))]
+fn validate_client_secret(value: &[u8]) -> Result<&str, String> {
+    let value =
+        std::str::from_utf8(value).map_err(|_| "Microsoft workload client secret must be UTF-8")?;
+    if value.is_empty() {
+        return Err("Microsoft workload client secret must not be empty".into());
+    }
+    Ok(value)
+}
 
 #[cfg(any(test, all(target_arch = "wasm32", target_os = "unknown")))]
 fn normalized_capabilities(capabilities: &[String]) -> Result<Vec<String>, String> {
@@ -92,13 +120,15 @@ mod guest {
     }
 
     use super::{
-        DEFAULT_CLIENT_ID, DEFAULT_TENANT, LocalCredentialStatus, local_credential_status,
-        normalized_capabilities, scopes,
+        CLIENT_SECRET_RECIPE, DEFAULT_CLIENT_ID, DEFAULT_TENANT, LocalCredentialStatus,
+        local_credential_status, normalized_capabilities, scopes, validate_client_secret,
+        validate_workload_identity,
     };
     use bindings::exports::kyyn::connection::api::{
         AuthChallenge, AuthPollResult, ConnectionStatus, Guest, RequestAuthorization,
     };
     use bindings::kyyn::connection::http::{self, Method, Request, Response};
+    use bindings::kyyn::connection::invocation_inputs;
     use bindings::kyyn::connection::secrets;
     use serde::Deserialize;
 
@@ -248,6 +278,49 @@ mod guest {
         Ok(())
     }
 
+    fn workload_recipe_selected() -> Result<bool, String> {
+        match invocation_inputs::recipe() {
+            None => Ok(false),
+            Some(recipe) if recipe == CLIENT_SECRET_RECIPE => Ok(true),
+            Some(_) => Err("unsupported Microsoft workload recipe".into()),
+        }
+    }
+
+    fn workload_secret() -> Result<Vec<u8>, String> {
+        let value = invocation_inputs::get(CLIENT_SECRET_RECIPE)
+            .map_err(|_| "Microsoft workload client secret is unavailable")?;
+        validate_client_secret(&value)?;
+        Ok(value)
+    }
+
+    fn workload_authorization(config: &Config) -> Result<RequestAuthorization, String> {
+        validate_workload_identity(&config.tenant, &config.client_id)?;
+        let secret = workload_secret()?;
+        let secret = validate_client_secret(&secret)?;
+        let response = fetch(&request(
+            config,
+            "token",
+            &[
+                ("grant_type", "client_credentials"),
+                ("client_id", &config.client_id),
+                ("client_secret", secret),
+                ("scope", "https://graph.microsoft.com/.default"),
+            ],
+        ))?;
+        let body = json(&response)?;
+        if !(200..300).contains(&response.status) {
+            return Err(format!(
+                "Microsoft rejected the workload credential (HTTP {})",
+                response.status
+            ));
+        }
+        let access = body["access_token"]
+            .as_str()
+            .filter(|value| !value.is_empty())
+            .ok_or("Microsoft returned no workload access token")?;
+        Ok(RequestAuthorization::Bearer(access.into()))
+    }
+
     struct Microsoft;
 
     impl Guest for Microsoft {
@@ -259,6 +332,13 @@ mod guest {
             let config = parse(&config)?;
             validate(&config)?;
             let capabilities = normalized_capabilities(&capabilities)?;
+            if workload_recipe_selected()? {
+                validate_workload_identity(&config.tenant, &config.client_id)?;
+                workload_secret()?;
+                return Ok(ConnectionStatus::Enrolled(
+                    "Microsoft workload application (runner-bound)".into(),
+                ));
+            }
             if stored_capabilities().as_ref() != Some(&capabilities) {
                 return Ok(ConnectionStatus::NotEnrolled(
                     "the accepted capability set needs owner sign-in".into(),
@@ -289,6 +369,9 @@ mod guest {
             let config = parse(&config)?;
             validate(&config)?;
             let capabilities = normalized_capabilities(&capabilities)?;
+            if workload_recipe_selected()? {
+                return workload_authorization(&config);
+            }
             if stored_capabilities().as_ref() != Some(&capabilities) {
                 return Err("the accepted capability set needs owner sign-in".into());
             }
@@ -406,6 +489,30 @@ mod tests {
         assert_eq!(
             local_credential_status(true, true),
             LocalCredentialStatus::Enrolled
+        );
+    }
+
+    #[test]
+    fn workload_identity_is_tenant_specific_and_not_the_shared_public_app() {
+        assert!(validate_workload_identity(DEFAULT_TENANT, "application-id").is_err());
+        assert!(validate_workload_identity("common", "application-id").is_err());
+        assert!(validate_workload_identity("tenant.example", DEFAULT_CLIENT_ID).is_err());
+        assert!(validate_workload_identity("tenant.example", "application-id").is_ok());
+    }
+
+    #[test]
+    fn workload_secret_is_nonempty_utf8_without_entering_diagnostics() {
+        assert_eq!(
+            validate_client_secret(b"runner-secret").unwrap(),
+            "runner-secret"
+        );
+        assert_eq!(
+            validate_client_secret(b"").unwrap_err(),
+            "Microsoft workload client secret must not be empty"
+        );
+        assert_eq!(
+            validate_client_secret(&[0xff]).unwrap_err(),
+            "Microsoft workload client secret must be UTF-8"
         );
     }
 }

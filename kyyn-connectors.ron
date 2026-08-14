@@ -8,8 +8,20 @@
         (name: "microsoft", summary: "A reusable Microsoft 365 account connection with least-privilege capability enrollment.",
          world: "kyyn:connection@1",
          component: "components/connections/microsoft-connection.wasm",
-         component_sha256: "867d72d37ada21ddabb0580b7587a53a3f06510f0936172f99a462191b8cb345",
+         component_sha256: "e9039fc91f7e9a04ddbac1632f0745e2d2f7ba8c11b71f8d26d876aa0d31eb96",
          capabilities: ["calendar-read", "chats-read", "files-read", "files-write", "mail-read", "meetings-read"],
+         principal_classes: [DelegatedHuman, WorkloadApplication],
+         workload_recipes: [(
+            name: "client-secret",
+            summary: "Exchange one runner-local Entra application client secret for a short-lived Microsoft Graph application token.",
+            inputs: [(
+                name: "client-secret",
+                label: "Client secret",
+                doc: "Runner-local secret for the accepted tenant-specific Entra application; never persisted by Kyyn.",
+                kind: ClientSecret,
+                max_bytes: 16384,
+            )],
+         )],
          requests: [
             (purpose: Authenticate, authorization: None, authority: "https://login.microsoftonline.com", method: Post, path: "/{segment}/oauth2/v2.0/devicecode"),
             (purpose: Authenticate, authorization: None, authority: "https://login.microsoftonline.com", method: Post, path: "/{segment}/oauth2/v2.0/token"),
@@ -21,13 +33,13 @@
             "https://login.microsoftonline.com",
          ],
          config: [
-            (name: "tenant", doc: "Entra tenant GUID or domain; organizations supports the shared multi-tenant Kyyn app.", default: Some("organizations")),
-            (name: "client_id", doc: "Public Entra application id; the default is Kyyn's shared multi-tenant app.", default: Some("53ddb21b-849f-45a3-8168-8a0e555f386f")),
+            (name: "tenant", doc: "Entra tenant GUID or domain. Delegated sign-in may use organizations; workload Connections require an explicit tenant.", default: Some("organizations")),
+            (name: "client_id", doc: "Entra application id. Delegated sign-in defaults to Kyyn's shared public app; workload Connections require the owner's explicit application id.", default: Some("53ddb21b-849f-45a3-8168-8a0e555f386f")),
          ]),
         (name: "salesforce", summary: "A reusable Salesforce org connection enrolled through Connected App device flow.",
          world: "kyyn:connection@1",
          component: "components/connections/salesforce-connection.wasm",
-         component_sha256: "e448416612abd2c8df19a9cf770161c687ac9b7535e285f9fa6e95da4bd07789",
+         component_sha256: "df2059656a9cd3fb355163873ce2692fcbae6746d6c3db2373aa3309308753de",
          capabilities: ["api"],
          requests: [
             (purpose: Authenticate, authorization: None, authority: "config:instance_url", method: Post, path: "/services/oauth2/token"),
@@ -143,7 +155,7 @@
          ]),
         (name: "microsoft-files", summary: "One owner-resolved SharePoint or OneDrive file, or a recursively filtered folder, as versioned evidence.",
          world: "kyyn:source@1", namespace: "microsoft-file",
-         connection: (provider: "microsoft", capabilities: ["files-read"]),
+         connection: (provider: "microsoft", capabilities: ["files-read"], principal_classes: [DelegatedHuman, WorkloadApplication]),
          capabilities: (requests: [
             (purpose: Observe, authorization: Connection, authority: "https://graph.microsoft.com", method: Get, path: "/v1.0/drives/{segment}/items/{segment}"),
             (purpose: Observe, authorization: Connection, authority: "https://graph.microsoft.com", method: Get, path: "/v1.0/drives/{segment}/items/{segment}/children"),
@@ -195,7 +207,7 @@
          ]),
         (name: "microsoft-file-replace", summary: "Create or replace one owner-resolved SharePoint/OneDrive file when its reviewed provider state still matches.",
          world: "kyyn:sink@1", delivery: Convergent,
-         connection: (provider: "microsoft", capabilities: ["files-write"]),
+         connection: (provider: "microsoft", capabilities: ["files-write"], principal_classes: [DelegatedHuman, WorkloadApplication]),
          component: "components/sinks/microsoft-file-replace.wasm",
          component_sha256: "272853d4e33b904692fedc329def60f258cdbf17a7e3fbe6de828640d24b9b74",
          capabilities: (requests: [

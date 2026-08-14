@@ -63,6 +63,25 @@ expected state, and exact replacement bytes; canonical identity, Graph
 transport, conditional-write headers, and the sink-only write credential stay
 inside the Kyyn host.
 
+The Microsoft provider supports two explicit principal classes. Delegated
+human Connections retain the existing device-code journey and local refresh
+credential. Workload application Connections use the `client-secret` recipe:
+the accepted Connection names an explicit tenant and Entra application id,
+while each invocation binds `client-secret` from a named environment variable,
+absolute regular file, or bounded stdin. The provider exchanges it through the
+tenant token endpoint using the OAuth client-credentials `.default` scope and
+returns only the short-lived bearer authorization to Kyyn; it writes no
+workload credential or token to durable Connection state.
+
+Only `microsoft-files` and `microsoft-file-replace` advertise workload
+compatibility. The mail, calendar, chats, and meetings connectors retain
+delegated-only `/me` semantics. The Entra administrator must separately grant
+the workload application the real Microsoft Graph application permissions its
+selected file consumer needs. Prefer SharePoint resource-scoped selected
+permissions where the deployment supports them; otherwise tenant-wide grants
+remain visible deployment authority and are not narrowed by Kyyn's exact
+`/drives/...` request boundary.
+
 There is deliberately no raw Kyyn-KB import connector. KB identity, schema and
 accept authority do not cross repositories; a future federation source may
 publish an immutable query result bound to the producer truth commit. Until
