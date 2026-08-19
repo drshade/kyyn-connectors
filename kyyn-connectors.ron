@@ -8,7 +8,7 @@
         (name: "microsoft", summary: "A reusable Microsoft 365 account connection with least-privilege capability enrollment.",
          world: "kyyn:connection@1",
          component: "components/connections/microsoft-connection.wasm",
-         component_sha256: "e9039fc91f7e9a04ddbac1632f0745e2d2f7ba8c11b71f8d26d876aa0d31eb96",
+         component_sha256: "c9b3a15d1eeeb61640afb26ca5086c0ed52817017445085ee0b0d2db4b39c5c6",
          capabilities: ["calendar-read", "chats-read", "files-read", "files-write", "mail-read", "meetings-read"],
          principal_classes: [DelegatedHuman, WorkloadApplication],
          workload_recipes: [(
@@ -39,7 +39,7 @@
         (name: "salesforce", summary: "A reusable Salesforce org connection using delegated device flow or a runner-bound workload application.",
          world: "kyyn:connection@1",
          component: "components/connections/salesforce-connection.wasm",
-         component_sha256: "80cf87846ea857f9d440da42a27bb010b3f14e2b24577cef69050febc41ecc8b",
+         component_sha256: "72c177e4783d87e6ae84f5fcb169ec46ea4ec4d7c102f9e2ee77dccef2d4ce99",
          capabilities: ["api"],
          principal_classes: [DelegatedHuman, WorkloadApplication],
          workload_recipes: [(

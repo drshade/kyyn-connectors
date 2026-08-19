@@ -92,6 +92,12 @@ the secret or token. The Salesforce administrator separately selects the
 least-privilege integration **Run As** user and grants the application only the
 API scopes and object access the standing SOQL sources require.
 
+For both first-party workload providers, Connection status is an explicit
+credential preflight: it performs the same client-credentials exchange as real
+use, discards the returned bearer token, and reports enrolled only after that
+exchange succeeds. Merely binding a non-empty runner secret is not presented as
+a verified Connection.
+
 There is deliberately no raw Kyyn-KB import connector. KB identity, schema and
 accept authority do not cross repositories; a future federation source may
 publish an immutable query result bound to the producer truth commit. Until
