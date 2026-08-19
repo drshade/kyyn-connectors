@@ -6,6 +6,19 @@ fn validate_capabilities(capabilities: &[String]) -> Result<(), String> {
     Ok(())
 }
 
+#[cfg(all(target_arch = "wasm32", target_os = "unknown"))]
+const CLIENT_SECRET_RECIPE: &str = "client-secret";
+
+#[cfg(any(test, all(target_arch = "wasm32", target_os = "unknown")))]
+fn validate_client_secret(value: &[u8]) -> Result<&str, String> {
+    let value = std::str::from_utf8(value)
+        .map_err(|_| "Salesforce workload client secret must be UTF-8")?;
+    if value.is_empty() {
+        return Err("Salesforce workload client secret must not be empty".into());
+    }
+    Ok(value)
+}
+
 #[cfg(any(test, all(target_arch = "wasm32", target_os = "unknown")))]
 #[derive(Debug, PartialEq, Eq)]
 enum LocalCredentialStatus {
@@ -32,11 +45,15 @@ mod guest {
         });
     }
 
-    use super::{LocalCredentialStatus, local_credential_status, validate_capabilities};
+    use super::{
+        CLIENT_SECRET_RECIPE, LocalCredentialStatus, local_credential_status,
+        validate_capabilities, validate_client_secret,
+    };
     use bindings::exports::kyyn::connection::api::{
         AuthChallenge, AuthPollResult, ConnectionStatus, Guest, RequestAuthorization,
     };
     use bindings::kyyn::connection::http::{self, Method, Request, Response};
+    use bindings::kyyn::connection::invocation_inputs;
     use bindings::kyyn::connection::secrets;
     use serde::Deserialize;
 
@@ -164,6 +181,46 @@ mod guest {
         Ok(())
     }
 
+    fn workload_recipe_selected() -> Result<bool, String> {
+        match invocation_inputs::recipe() {
+            None => Ok(false),
+            Some(recipe) if recipe == CLIENT_SECRET_RECIPE => Ok(true),
+            Some(_) => Err("unsupported Salesforce workload recipe".into()),
+        }
+    }
+
+    fn workload_secret() -> Result<Vec<u8>, String> {
+        let value = invocation_inputs::get(CLIENT_SECRET_RECIPE)
+            .map_err(|_| "Salesforce workload client secret is unavailable")?;
+        validate_client_secret(&value)?;
+        Ok(value)
+    }
+
+    fn workload_authorization(config: &Config) -> Result<RequestAuthorization, String> {
+        let secret = workload_secret()?;
+        let secret = validate_client_secret(&secret)?;
+        let response = fetch(&request(
+            config,
+            &[
+                ("grant_type", "client_credentials"),
+                ("client_id", &config.client_id),
+                ("client_secret", secret),
+            ],
+        ))?;
+        let body = json(&response)?;
+        if !(200..300).contains(&response.status) {
+            return Err(format!(
+                "Salesforce rejected the workload credential (HTTP {})",
+                response.status
+            ));
+        }
+        let access = body["access_token"]
+            .as_str()
+            .filter(|value| !value.is_empty())
+            .ok_or("Salesforce returned no workload access token")?;
+        Ok(RequestAuthorization::Bearer(access.into()))
+    }
+
     struct Salesforce;
 
     impl Guest for Salesforce {
@@ -175,6 +232,12 @@ mod guest {
             let config = parse(&config)?;
             validate(&config)?;
             validate_capabilities(&capabilities)?;
+            if workload_recipe_selected()? {
+                workload_secret()?;
+                return Ok(ConnectionStatus::Enrolled(
+                    "Salesforce workload application (runner-bound)".into(),
+                ));
+            }
             if !capabilities_match(&capabilities) {
                 return Ok(ConnectionStatus::NotEnrolled(
                     "the accepted capability set needs owner sign-in".into(),
@@ -205,6 +268,9 @@ mod guest {
             let config = parse(&config)?;
             validate(&config)?;
             validate_capabilities(&capabilities)?;
+            if workload_recipe_selected()? {
+                return workload_authorization(&config);
+            }
             if !capabilities_match(&capabilities) {
                 return Err("the accepted capability set needs owner sign-in".into());
             }
@@ -312,6 +378,22 @@ mod tests {
         assert_eq!(
             local_credential_status(true, true),
             LocalCredentialStatus::Enrolled
+        );
+    }
+
+    #[test]
+    fn workload_secret_is_nonempty_utf8_without_entering_diagnostics() {
+        assert_eq!(
+            validate_client_secret(b"runner-secret").unwrap(),
+            "runner-secret"
+        );
+        assert_eq!(
+            validate_client_secret(b"").unwrap_err(),
+            "Salesforce workload client secret must not be empty"
+        );
+        assert_eq!(
+            validate_client_secret(&[0xff]).unwrap_err(),
+            "Salesforce workload client secret must be UTF-8"
         );
     }
 }
