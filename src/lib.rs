@@ -487,9 +487,18 @@ mod contract {
         );
         assert_eq!(
             salesforce.principal_classes,
-            [ConnectionPrincipalClass::DelegatedHuman]
+            [
+                ConnectionPrincipalClass::DelegatedHuman,
+                ConnectionPrincipalClass::WorkloadApplication,
+            ]
         );
-        assert!(salesforce.workload_recipes.is_empty());
+        assert_eq!(salesforce.workload_recipes.len(), 1);
+        assert_eq!(salesforce.workload_recipes[0].name, "client-secret");
+        assert_eq!(salesforce.workload_recipes[0].inputs.len(), 1);
+        assert_eq!(
+            salesforce.workload_recipes[0].inputs[0].kind,
+            ConnectionWorkloadInputKind::ClientSecret
+        );
         let mut names = HashSet::new();
         for source in &manifest.sources {
             assert!(
@@ -696,6 +705,18 @@ mod contract {
                     |source| source.connection.as_ref().unwrap().principal_classes
                         == [ConnectionPrincipalClass::DelegatedHuman]
                 )
+        );
+        let salesforce = manifest
+            .sources
+            .iter()
+            .find(|source| source.name == "salesforce")
+            .expect("Salesforce source is advertised");
+        assert_eq!(
+            salesforce.connection.as_ref().unwrap().principal_classes,
+            [
+                ConnectionPrincipalClass::DelegatedHuman,
+                ConnectionPrincipalClass::WorkloadApplication,
+            ]
         );
         let configurator = microsoft_files
             .configurator

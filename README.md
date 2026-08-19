@@ -82,6 +82,16 @@ permissions where the deployment supports them; otherwise tenant-wide grants
 remain visible deployment authority and are not narrowed by Kyyn's exact
 `/drives/...` request boundary.
 
+The Salesforce provider and SOQL source also support delegated and workload
+principals. A workload Connection uses the `client-secret` recipe: the accepted
+Connection carries the exact Salesforce My Domain and application consumer key,
+while the invocation supplies only its runner-local consumer secret. The
+provider exchanges those values through Salesforce's OAuth client-credentials
+flow and returns the short-lived integration-user bearer token without storing
+the secret or token. The Salesforce administrator separately selects the
+least-privilege integration **Run As** user and grants the application only the
+API scopes and object access the standing SOQL sources require.
+
 There is deliberately no raw Kyyn-KB import connector. KB identity, schema and
 accept authority do not cross repositories; a future federation source may
 publish an immutable query result bound to the producer truth commit. Until

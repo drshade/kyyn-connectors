@@ -36,11 +36,23 @@
             (name: "tenant", doc: "Entra tenant GUID or domain. Delegated sign-in may use organizations; workload Connections require an explicit tenant.", default: Some("organizations")),
             (name: "client_id", doc: "Entra application id. Delegated sign-in defaults to Kyyn's shared public app; workload Connections require the owner's explicit application id.", default: Some("53ddb21b-849f-45a3-8168-8a0e555f386f")),
          ]),
-        (name: "salesforce", summary: "A reusable Salesforce org connection enrolled through Connected App device flow.",
+        (name: "salesforce", summary: "A reusable Salesforce org connection using delegated device flow or a runner-bound workload application.",
          world: "kyyn:connection@1",
          component: "components/connections/salesforce-connection.wasm",
-         component_sha256: "df2059656a9cd3fb355163873ce2692fcbae6746d6c3db2373aa3309308753de",
+         component_sha256: "80cf87846ea857f9d440da42a27bb010b3f14e2b24577cef69050febc41ecc8b",
          capabilities: ["api"],
+         principal_classes: [DelegatedHuman, WorkloadApplication],
+         workload_recipes: [(
+            name: "client-secret",
+            summary: "Exchange one runner-local Salesforce application client secret for a short-lived integration-user token.",
+            inputs: [(
+                name: "client-secret",
+                label: "Client secret",
+                doc: "Runner-local consumer secret for the accepted Salesforce application; never persisted by Kyyn.",
+                kind: ClientSecret,
+                max_bytes: 16384,
+            )],
+         )],
          requests: [
             (purpose: Authenticate, authorization: None, authority: "config:instance_url", method: Post, path: "/services/oauth2/token"),
          ],
@@ -51,7 +63,7 @@
          ],
          config: [
             (name: "instance_url", doc: "The org's exact My Domain HTTPS origin.", ty: HttpsOrigin, required: true, example: Some("https://acme.my.salesforce.com")),
-            (name: "client_id", doc: "The Connected App consumer key (device flow enabled; not a secret).", required: true, example: Some("3MVG9…")),
+            (name: "client_id", doc: "The Connected or External Client App consumer key (not a secret). Enable device flow for delegated use or client credentials with an integration Run As user for workload use.", required: true, example: Some("3MVG9…")),
          ]),
     ],
     sources: [
@@ -85,9 +97,9 @@
             (name: "rev", doc: "Full 40-hex commit OID of the templates repo — bump by proposal to take updates.", required: true, example: Some("90fd6c9f3288717e2de0572a8f33d653661b32cf")),
             (name: "repo", doc: "Templates repository (public URL, or a local path for development).", default: Some("https://github.com/drshade/kyyn-templates")),
          ]),
-        (name: "salesforce", summary: "A SOQL query's records as evidence, via a Connected App device-flow sign-in.",
+        (name: "salesforce", summary: "A SOQL query's records as evidence through a delegated or workload Salesforce Connection.",
          world: "kyyn:source@1", namespace: "sf",
-         connection: (provider: "salesforce", capabilities: ["api"]),
+         connection: (provider: "salesforce", capabilities: ["api"], principal_classes: [DelegatedHuman, WorkloadApplication]),
          capabilities: (requests: [
             (purpose: Observe, authorization: Connection, authority: "connection:instance_url", method: Get, path: "/services/data/{segment}/query"),
             (purpose: Observe, authorization: Connection, authority: "connection:instance_url", method: Get, path: "/services/data/{segment}/query/{segment}"),
