@@ -35,6 +35,16 @@ fn validate_client_secret(value: &[u8]) -> Result<&str, String> {
 }
 
 #[cfg(any(test, all(target_arch = "wasm32", target_os = "unknown")))]
+fn ensure_workload_response(status: u16) -> Result<(), String> {
+    if !(200..300).contains(&status) {
+        return Err(format!(
+            "Microsoft rejected the workload credential (HTTP {status})"
+        ));
+    }
+    Ok(())
+}
+
+#[cfg(any(test, all(target_arch = "wasm32", target_os = "unknown")))]
 fn normalized_capabilities(capabilities: &[String]) -> Result<Vec<String>, String> {
     const KNOWN: &[&str] = &[
         "calendar-read",
@@ -121,8 +131,8 @@ mod guest {
 
     use super::{
         CLIENT_SECRET_RECIPE, DEFAULT_CLIENT_ID, DEFAULT_TENANT, LocalCredentialStatus,
-        local_credential_status, normalized_capabilities, scopes, validate_client_secret,
-        validate_workload_identity,
+        ensure_workload_response, local_credential_status, normalized_capabilities, scopes,
+        validate_client_secret, validate_workload_identity,
     };
     use bindings::exports::kyyn::connection::api::{
         AuthChallenge, AuthPollResult, ConnectionStatus, Guest, RequestAuthorization,
@@ -307,13 +317,8 @@ mod guest {
                 ("scope", "https://graph.microsoft.com/.default"),
             ],
         ))?;
+        ensure_workload_response(response.status)?;
         let body = json(&response)?;
-        if !(200..300).contains(&response.status) {
-            return Err(format!(
-                "Microsoft rejected the workload credential (HTTP {})",
-                response.status
-            ));
-        }
         let access = body["access_token"]
             .as_str()
             .filter(|value| !value.is_empty())
@@ -333,10 +338,9 @@ mod guest {
             validate(&config)?;
             let capabilities = normalized_capabilities(&capabilities)?;
             if workload_recipe_selected()? {
-                validate_workload_identity(&config.tenant, &config.client_id)?;
-                workload_secret()?;
+                workload_authorization(&config)?;
                 return Ok(ConnectionStatus::Enrolled(
-                    "Microsoft workload application (runner-bound)".into(),
+                    "Microsoft workload application (runner-bound, credential verified)".into(),
                 ));
             }
             if stored_capabilities().as_ref() != Some(&capabilities) {
@@ -514,5 +518,14 @@ mod tests {
             validate_client_secret(&[0xff]).unwrap_err(),
             "Microsoft workload client secret must be UTF-8"
         );
+    }
+
+    #[test]
+    fn workload_http_failure_precedes_response_parsing() {
+        assert_eq!(
+            ensure_workload_response(502).unwrap_err(),
+            "Microsoft rejected the workload credential (HTTP 502)"
+        );
+        assert!(ensure_workload_response(200).is_ok());
     }
 }

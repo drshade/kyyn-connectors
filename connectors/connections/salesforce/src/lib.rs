@@ -20,6 +20,16 @@ fn validate_client_secret(value: &[u8]) -> Result<&str, String> {
 }
 
 #[cfg(any(test, all(target_arch = "wasm32", target_os = "unknown")))]
+fn ensure_workload_response(status: u16) -> Result<(), String> {
+    if !(200..300).contains(&status) {
+        return Err(format!(
+            "Salesforce rejected the workload credential (HTTP {status})"
+        ));
+    }
+    Ok(())
+}
+
+#[cfg(any(test, all(target_arch = "wasm32", target_os = "unknown")))]
 #[derive(Debug, PartialEq, Eq)]
 enum LocalCredentialStatus {
     NotEnrolled,
@@ -46,8 +56,8 @@ mod guest {
     }
 
     use super::{
-        CLIENT_SECRET_RECIPE, LocalCredentialStatus, local_credential_status,
-        validate_capabilities, validate_client_secret,
+        CLIENT_SECRET_RECIPE, LocalCredentialStatus, ensure_workload_response,
+        local_credential_status, validate_capabilities, validate_client_secret,
     };
     use bindings::exports::kyyn::connection::api::{
         AuthChallenge, AuthPollResult, ConnectionStatus, Guest, RequestAuthorization,
@@ -207,13 +217,8 @@ mod guest {
                 ("client_secret", secret),
             ],
         ))?;
+        ensure_workload_response(response.status)?;
         let body = json(&response)?;
-        if !(200..300).contains(&response.status) {
-            return Err(format!(
-                "Salesforce rejected the workload credential (HTTP {})",
-                response.status
-            ));
-        }
         let access = body["access_token"]
             .as_str()
             .filter(|value| !value.is_empty())
@@ -233,9 +238,9 @@ mod guest {
             validate(&config)?;
             validate_capabilities(&capabilities)?;
             if workload_recipe_selected()? {
-                workload_secret()?;
+                workload_authorization(&config)?;
                 return Ok(ConnectionStatus::Enrolled(
-                    "Salesforce workload application (runner-bound)".into(),
+                    "Salesforce workload application (runner-bound, credential verified)".into(),
                 ));
             }
             if !capabilities_match(&capabilities) {
@@ -395,5 +400,14 @@ mod tests {
             validate_client_secret(&[0xff]).unwrap_err(),
             "Salesforce workload client secret must be UTF-8"
         );
+    }
+
+    #[test]
+    fn workload_http_failure_precedes_response_parsing() {
+        assert_eq!(
+            ensure_workload_response(502).unwrap_err(),
+            "Salesforce rejected the workload credential (HTTP 502)"
+        );
+        assert!(ensure_workload_response(200).is_ok());
     }
 }
