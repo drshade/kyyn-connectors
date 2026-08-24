@@ -1,0 +1,278 @@
+{
+  "fixtureVersion": 1,
+  "scenarios": [
+    {
+      "id": "all-members-calendar-complete",
+      "leg": "calendar",
+      "proves": ["stable-roster", "throttling"],
+      "scope": { "kind": "allMembers" },
+      "invocations": [{
+        "checkpoint": null,
+        "interruptAfterExchange": null,
+        "exchanges": [
+          {
+            "request": { "method": "GET", "path": "/v1.0/users?$filter=accountEnabled%20eq%20true%20and%20userType%20eq%20'Member'&$select=id,displayName,userPrincipalName,mail,accountEnabled,userType&$top=999", "body": null },
+            "responses": [{ "status": 200, "body": { "value": [
+              { "id": "user-alpha", "displayName": "Alpha Example", "userPrincipalName": "alpha@example.test", "mail": "alpha@example.test", "accountEnabled": true, "userType": "Member" },
+              { "id": "user-disabled", "displayName": "Disabled Example", "userPrincipalName": "disabled@example.test", "mail": "disabled@example.test", "accountEnabled": false, "userType": "Member" },
+              { "id": "user-guest", "displayName": "Guest Example", "userPrincipalName": "guest_example.test#EXT#@example.test", "mail": "guest@outside.example.test", "accountEnabled": true, "userType": "Guest" }
+            ], "@odata.nextLink": "https://graph.microsoft.com/v1.0/users?$skiptoken=synthetic-page-2" } }]
+          },
+          {
+            "request": { "method": "GET", "path": "/v1.0/users?$skiptoken=synthetic-page-2", "body": null },
+            "responses": [{ "status": 200, "body": { "value": [
+              { "id": "user-beta", "displayName": "Beta Example", "userPrincipalName": "beta@example.test", "mail": null, "accountEnabled": true, "userType": "Member" }
+            ] } }]
+          },
+          {
+            "request": { "method": "GET", "path": "/v1.0/users/user-alpha/calendarView?startDateTime=2026-08-01T00:00:00Z&endDateTime=2026-08-02T00:00:00Z&$top=500", "body": null },
+            "responses": [
+              { "status": 429, "headers": { "retry-after": "2" }, "body": { "error": { "code": "TooManyRequests" } } },
+              { "status": 200, "body": { "value": [{ "id": "event-alpha-1", "iCalUId": "ical-alpha-1", "subject": "Synthetic planning" }] } }
+            ]
+          },
+          {
+            "request": { "method": "GET", "path": "/v1.0/users/user-beta/calendarView?startDateTime=2026-08-01T00:00:00Z&endDateTime=2026-08-02T00:00:00Z&$top=500", "body": null },
+            "responses": [{ "status": 404, "body": { "error": { "code": "MailboxNotEnabledForRESTAPI" } } }]
+          }
+        ]
+      }],
+      "expected": { "outcome": "complete", "publishesManifest": true, "itemCount": 1, "rosterUserIds": ["user-alpha", "user-beta"], "unavailableUserIds": ["user-beta"], "checkpoint": null }
+    },
+    {
+      "id": "selected-member-missing-refusal",
+      "leg": "calendar",
+      "proves": ["missing-selected-member"],
+      "scope": { "kind": "selectedMembers", "users": ["alpha@example.test", "missing@example.test"] },
+      "invocations": [{
+        "checkpoint": null,
+        "interruptAfterExchange": null,
+        "exchanges": [
+          {
+            "request": { "method": "GET", "path": "/v1.0/users/alpha%40example.test?$select=id,displayName,userPrincipalName,mail,accountEnabled,userType", "body": null },
+            "responses": [{ "status": 200, "body": { "id": "user-alpha", "displayName": "Alpha Example", "userPrincipalName": "alpha@example.test", "mail": "alpha@example.test", "accountEnabled": true, "userType": "Member" } }]
+          },
+          {
+            "request": { "method": "GET", "path": "/v1.0/users/missing%40example.test?$select=id,displayName,userPrincipalName,mail,accountEnabled,userType", "body": null },
+            "responses": [{ "status": 404, "body": { "error": { "code": "Request_ResourceNotFound" } } }]
+          }
+        ]
+      }],
+      "expected": { "outcome": "refused-before-observation", "publishesManifest": false, "itemCount": 0, "rosterUserIds": [], "unavailableUserIds": [], "checkpoint": null }
+    },
+    {
+      "id": "selected-member-disabled-refusal",
+      "leg": "calendar",
+      "proves": ["ineligible-selected-member"],
+      "scope": { "kind": "selectedMembers", "users": ["disabled@example.test"] },
+      "invocations": [{
+        "checkpoint": null,
+        "interruptAfterExchange": null,
+        "exchanges": [{
+          "request": { "method": "GET", "path": "/v1.0/users/disabled%40example.test?$select=id,displayName,userPrincipalName,mail,accountEnabled,userType", "body": null },
+          "responses": [{ "status": 200, "body": { "id": "user-disabled", "userPrincipalName": "disabled@example.test", "accountEnabled": false, "userType": "Member" } }]
+        }]
+      }],
+      "expected": { "outcome": "refused-before-observation", "publishesManifest": false, "itemCount": 0, "rosterUserIds": [], "unavailableUserIds": [], "checkpoint": null }
+    },
+    {
+      "id": "selected-member-guest-refusal",
+      "leg": "calendar",
+      "proves": ["ineligible-selected-member"],
+      "scope": { "kind": "selectedMembers", "users": ["guest@example.test"] },
+      "invocations": [{
+        "checkpoint": null,
+        "interruptAfterExchange": null,
+        "exchanges": [{
+          "request": { "method": "GET", "path": "/v1.0/users/guest%40example.test?$select=id,displayName,userPrincipalName,mail,accountEnabled,userType", "body": null },
+          "responses": [{ "status": 200, "body": { "id": "user-guest", "userPrincipalName": "guest@example.test", "accountEnabled": true, "userType": "Guest" } }]
+        }]
+      }],
+      "expected": { "outcome": "refused-before-observation", "publishesManifest": false, "itemCount": 0, "rosterUserIds": [], "unavailableUserIds": [], "checkpoint": null }
+    },
+    {
+      "id": "selected-calendar-partial-population-refusal",
+      "leg": "calendar",
+      "proves": ["partial-population", "throttling"],
+      "scope": { "kind": "selectedMembers", "users": ["alpha@example.test", "beta@example.test"] },
+      "invocations": [{
+        "checkpoint": null,
+        "interruptAfterExchange": null,
+        "exchanges": [
+          {
+            "request": { "method": "GET", "path": "/v1.0/users/alpha%40example.test?$select=id,displayName,userPrincipalName,mail,accountEnabled,userType", "body": null },
+            "responses": [{ "status": 200, "body": { "id": "user-alpha", "userPrincipalName": "alpha@example.test", "accountEnabled": true, "userType": "Member" } }]
+          },
+          {
+            "request": { "method": "GET", "path": "/v1.0/users/beta%40example.test?$select=id,displayName,userPrincipalName,mail,accountEnabled,userType", "body": null },
+            "responses": [{ "status": 200, "body": { "id": "user-beta", "userPrincipalName": "beta@example.test", "accountEnabled": true, "userType": "Member" } }]
+          },
+          {
+            "request": { "method": "GET", "path": "/v1.0/users/user-alpha/calendarView?startDateTime=2026-08-01T00:00:00Z&endDateTime=2026-08-02T00:00:00Z&$top=500", "body": null },
+            "responses": [{ "status": 200, "body": { "value": [{ "id": "event-alpha-1" }] } }]
+          },
+          {
+            "request": { "method": "GET", "path": "/v1.0/users/user-beta/calendarView?startDateTime=2026-08-01T00:00:00Z&endDateTime=2026-08-02T00:00:00Z&$top=500", "body": null },
+            "responses": [
+              { "status": 503, "body": { "error": { "code": "ServiceUnavailable" } } },
+              { "status": 503, "body": { "error": { "code": "ServiceUnavailable" } } },
+              { "status": 503, "body": { "error": { "code": "ServiceUnavailable" } } },
+              { "status": 503, "body": { "error": { "code": "ServiceUnavailable" } } },
+              { "status": 503, "body": { "error": { "code": "ServiceUnavailable" } } }
+            ]
+          }
+        ]
+      }],
+      "expected": { "outcome": "failed-no-publication", "publishesManifest": false, "itemCount": 0, "rosterUserIds": [], "unavailableUserIds": [], "checkpoint": null }
+    },
+    {
+      "id": "meeting-artifacts-mixed-availability",
+      "leg": "meeting-artifacts",
+      "proves": ["transcript-unavailable", "transcript-negotiation", "attendance-artifact"],
+      "scope": { "kind": "selectedMembers", "users": ["alpha@example.test"] },
+      "invocations": [{
+        "checkpoint": null,
+        "interruptAfterExchange": null,
+        "exchanges": [
+          {
+            "request": { "method": "GET", "path": "/v1.0/users/alpha%40example.test?$select=id,displayName,userPrincipalName,mail,accountEnabled,userType", "body": null },
+            "responses": [{ "status": 200, "body": { "id": "user-alpha", "userPrincipalName": "alpha@example.test", "accountEnabled": true, "userType": "Member" } }]
+          },
+          {
+            "request": { "method": "GET", "path": "/v1.0/users/user-alpha/calendarView?startDateTime=2026-08-01T00:00:00Z&endDateTime=2026-08-02T00:00:00Z&$top=500", "body": null },
+            "responses": [{ "status": 200, "body": { "value": [
+              { "id": "event-meeting-1", "isOnlineMeeting": true, "onlineMeeting": { "joinUrl": "https://teams.example.test/meet/one" } },
+              { "id": "event-meeting-2", "isOnlineMeeting": true, "onlineMeeting": { "joinUrl": "https://teams.example.test/meet/two" } }
+            ] } }]
+          },
+          {
+            "request": { "method": "GET", "path": "/v1.0/users/user-alpha/onlineMeetings?$filter=JoinWebUrl%20eq%20'https%3A%2F%2Fteams.example.test%2Fmeet%2Fone'", "body": null },
+            "responses": [{ "status": 200, "body": { "value": [{ "id": "meeting-001" }] } }]
+          },
+          {
+            "request": { "method": "GET", "path": "/v1.0/users/user-alpha/onlineMeetings/meeting-001/transcripts", "body": null },
+            "responses": [{ "status": 200, "body": { "value": [{ "id": "transcript-001", "createdDateTime": "2026-08-01T10:01:00Z" }] } }]
+          },
+          {
+            "request": { "method": "GET", "path": "/v1.0/users/user-alpha/onlineMeetings/meeting-001/transcripts/transcript-001/content", "headers": { "accept": "text/vtt" }, "body": null },
+            "responses": [{ "status": 403, "body": { "error": { "code": "Forbidden", "innerError": { "code": "SpeakerAttributionNotAllowed" } } } }]
+          },
+          {
+            "request": { "method": "GET", "path": "/v1.0/users/user-alpha/onlineMeetings/meeting-001/transcripts/transcript-001/content", "headers": { "accept": "application/vnd.microsoft.graph.transcript+text" }, "body": null },
+            "responses": [{ "status": 200, "headers": { "content-type": "application/vnd.microsoft.graph.transcript+text" }, "body": "00:00:01.000 --> 00:00:03.000 Synthetic utterance" }]
+          },
+          {
+            "request": { "method": "GET", "path": "/v1.0/users/user-alpha/onlineMeetings/meeting-001/attendanceReports", "body": null },
+            "responses": [{ "status": 200, "body": { "value": [{ "id": "attendance-001" }] } }]
+          },
+          {
+            "request": { "method": "GET", "path": "/v1.0/users/user-alpha/onlineMeetings/meeting-001/attendanceReports/attendance-001/attendanceRecords", "body": null },
+            "responses": [{ "status": 200, "body": { "value": [{ "id": "attendance-record-001", "emailAddress": "attendee@example.test", "totalAttendanceInSeconds": 1800 }] } }]
+          },
+          {
+            "request": { "method": "GET", "path": "/v1.0/users/user-alpha/onlineMeetings?$filter=JoinWebUrl%20eq%20'https%3A%2F%2Fteams.example.test%2Fmeet%2Ftwo'", "body": null },
+            "responses": [{ "status": 200, "body": { "value": [{ "id": "meeting-002" }] } }]
+          },
+          {
+            "request": { "method": "GET", "path": "/v1.0/users/user-alpha/onlineMeetings/meeting-002/transcripts", "body": null },
+            "responses": [{ "status": 200, "body": { "value": [] } }]
+          },
+          {
+            "request": { "method": "GET", "path": "/v1.0/users/user-alpha/onlineMeetings/meeting-002/attendanceReports", "body": null },
+            "responses": [{ "status": 404, "body": { "error": { "code": "NotFound" } } }]
+          }
+        ]
+      }],
+      "expected": { "outcome": "complete", "publishesManifest": true, "itemCount": 2, "rosterUserIds": ["user-alpha"], "unavailableUserIds": [], "checkpoint": null }
+    },
+    {
+      "id": "audit-create-pending",
+      "leg": "audit",
+      "proves": ["audit-pending"],
+      "scope": { "kind": "allMembers" },
+      "invocations": [{
+        "checkpoint": null,
+        "interruptAfterExchange": null,
+        "exchanges": [
+          { "request": { "method": "GET", "path": "/v1.0/security/auditLog/queries", "body": null }, "responses": [{ "status": 200, "body": { "value": [] } }] },
+          { "request": { "method": "POST", "path": "/v1.0/security/auditLog/queries", "body": { "displayName": "kyyn-source-audit-window-001", "filterStartDateTime": "2026-08-01T00:00:00Z", "filterEndDateTime": "2026-08-02T00:00:00Z", "recordTypeFilters": ["microsoftTeams"], "operationFilters": ["MeetingDetail", "MeetingParticipantDetail"] } }, "responses": [{ "status": 201, "body": { "id": "query-001", "displayName": "kyyn-source-audit-window-001", "status": "notStarted", "filterStartDateTime": "2026-08-01T00:00:00Z", "filterEndDateTime": "2026-08-02T00:00:00Z", "recordTypeFilters": ["microsoftTeams"], "operationFilters": ["MeetingDetail", "MeetingParticipantDetail"] } }] }
+        ]
+      }],
+      "expected": { "outcome": "pending", "publishesManifest": true, "itemCount": 0, "rosterUserIds": [], "unavailableUserIds": [], "checkpoint": "audit:v1:query-001" }
+    },
+    {
+      "id": "audit-crash-after-create-rediscover",
+      "leg": "audit",
+      "proves": ["crash-after-query-creation", "exact-query-rediscovery", "audit-pending"],
+      "scope": { "kind": "allMembers" },
+      "invocations": [
+        {
+          "checkpoint": null,
+          "interruptAfterExchange": 2,
+          "exchanges": [
+            { "request": { "method": "GET", "path": "/v1.0/security/auditLog/queries", "body": null }, "responses": [{ "status": 200, "body": { "value": [] } }] },
+            { "request": { "method": "POST", "path": "/v1.0/security/auditLog/queries", "body": { "displayName": "kyyn-source-audit-window-001", "filterStartDateTime": "2026-08-01T00:00:00Z", "filterEndDateTime": "2026-08-02T00:00:00Z", "recordTypeFilters": ["microsoftTeams"], "operationFilters": ["MeetingDetail", "MeetingParticipantDetail"] } }, "responses": [{ "status": 201, "body": { "id": "query-001", "displayName": "kyyn-source-audit-window-001", "status": "notStarted", "filterStartDateTime": "2026-08-01T00:00:00Z", "filterEndDateTime": "2026-08-02T00:00:00Z", "recordTypeFilters": ["microsoftTeams"], "operationFilters": ["MeetingDetail", "MeetingParticipantDetail"] } }] }
+          ]
+        },
+        {
+          "checkpoint": null,
+          "interruptAfterExchange": null,
+          "exchanges": [
+            { "request": { "method": "GET", "path": "/v1.0/security/auditLog/queries", "body": null }, "responses": [{ "status": 200, "body": { "value": [{ "id": "query-001", "displayName": "kyyn-source-audit-window-001", "status": "running", "filterStartDateTime": "2026-08-01T00:00:00Z", "filterEndDateTime": "2026-08-02T00:00:00Z", "recordTypeFilters": ["microsoftTeams"], "operationFilters": ["MeetingDetail", "MeetingParticipantDetail"] }] } }] },
+            { "request": { "method": "GET", "path": "/v1.0/security/auditLog/queries/query-001", "body": null }, "responses": [{ "status": 200, "body": { "id": "query-001", "status": "running" } }] }
+          ]
+        }
+      ],
+      "expected": { "outcome": "pending", "publishesManifest": true, "itemCount": 0, "rosterUserIds": [], "unavailableUserIds": [], "checkpoint": "audit:v1:query-001" }
+    },
+    {
+      "id": "audit-ambiguous-query-refusal",
+      "leg": "audit",
+      "proves": ["ambiguous-query-refusal"],
+      "scope": { "kind": "allMembers" },
+      "invocations": [{
+        "checkpoint": null,
+        "interruptAfterExchange": null,
+        "exchanges": [{
+          "request": { "method": "GET", "path": "/v1.0/security/auditLog/queries", "body": null },
+          "responses": [{ "status": 200, "body": { "value": [
+            { "id": "query-001", "displayName": "kyyn-source-audit-window-001", "status": "running", "filterStartDateTime": "2026-08-01T00:00:00Z", "filterEndDateTime": "2026-08-02T00:00:00Z", "recordTypeFilters": ["microsoftTeams"], "operationFilters": ["MeetingDetail", "MeetingParticipantDetail"] },
+            { "id": "query-duplicate", "displayName": "kyyn-source-audit-window-001", "status": "running", "filterStartDateTime": "2026-08-01T00:00:00Z", "filterEndDateTime": "2026-08-02T00:00:00Z", "recordTypeFilters": ["microsoftTeams"], "operationFilters": ["MeetingDetail", "MeetingParticipantDetail"] }
+          ] } }]
+        }]
+      }],
+      "expected": { "outcome": "failed-no-publication", "publishesManifest": false, "itemCount": 0, "rosterUserIds": [], "unavailableUserIds": [], "checkpoint": null }
+    },
+    {
+      "id": "audit-checkpoint-complete-paged",
+      "leg": "audit",
+      "proves": ["audit-pagination"],
+      "scope": { "kind": "allMembers" },
+      "invocations": [{
+        "checkpoint": "audit:v1:query-001",
+        "interruptAfterExchange": null,
+        "exchanges": [
+          { "request": { "method": "GET", "path": "/v1.0/security/auditLog/queries/query-001", "body": null }, "responses": [{ "status": 200, "body": { "id": "query-001", "status": "succeeded" } }] },
+          { "request": { "method": "GET", "path": "/v1.0/security/auditLog/queries/query-001/records?$top=500", "body": null }, "responses": [{ "status": 200, "body": { "value": [{ "id": "audit-record-001", "operation": "MeetingDetail" }], "@odata.nextLink": "https://graph.microsoft.com/v1.0/security/auditLog/queries/query-001/records?$skiptoken=synthetic-page-2" } }] },
+          { "request": { "method": "GET", "path": "/v1.0/security/auditLog/queries/query-001/records?$skiptoken=synthetic-page-2", "body": null }, "responses": [{ "status": 200, "body": { "value": [{ "id": "audit-record-002", "operation": "MeetingParticipantDetail" }] } }] }
+        ]
+      }],
+      "expected": { "outcome": "complete", "publishesManifest": true, "itemCount": 2, "rosterUserIds": [], "unavailableUserIds": [], "checkpoint": null }
+    },
+    {
+      "id": "audit-terminal-failure-complete",
+      "leg": "audit",
+      "proves": ["audit-terminal-outcome"],
+      "scope": { "kind": "allMembers" },
+      "invocations": [{
+        "checkpoint": "audit:v1:query-terminal",
+        "interruptAfterExchange": null,
+        "exchanges": [{
+          "request": { "method": "GET", "path": "/v1.0/security/auditLog/queries/query-terminal", "body": null },
+          "responses": [{ "status": 200, "body": { "id": "query-terminal", "status": "failed" } }]
+        }]
+      }],
+      "expected": { "outcome": "complete", "publishesManifest": true, "itemCount": 0, "rosterUserIds": [], "unavailableUserIds": [], "checkpoint": null }
+    }
+  ]
+}
