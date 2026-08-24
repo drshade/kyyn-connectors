@@ -75,14 +75,22 @@ tenant token endpoint using the OAuth client-credentials `.default` scope and
 returns only the short-lived bearer authorization to Kyyn; it writes no
 workload credential or token to durable Connection state.
 
-Only `microsoft-files` and `microsoft-file-replace` advertise workload
-compatibility. The mail, calendar, chats, and meetings connectors retain
-delegated-only `/me` semantics. The Entra administrator must separately grant
-the workload application the real Microsoft Graph application permissions its
-selected file consumer needs. Prefer SharePoint resource-scoped selected
-permissions where the deployment supports them; otherwise tenant-wide grants
-remain visible deployment authority and are not narrowed by Kyyn's exact
-`/drives/...` request boundary.
+`graph-org-calendar` is workload-only and observes either every enabled
+organization member or one explicit non-empty set emitted by its zero-network
+population configurator. Its accepted scope governs what the component asks
+for; it does not claim to narrow the application credential's directory read.
+For selected populations, the administrator must establish the supported
+Exchange resource scope without a concurrent tenant-wide calendar role that
+would undo it. Directory user read remains tenant-wide and is disclosed as
+such.
+
+The original mail, calendar, chats, and meetings connectors retain
+delegated-only `/me` semantics. `microsoft-files` and
+`microsoft-file-replace` remain dual-principal. The Entra administrator must
+separately grant every workload application the real Microsoft Graph
+application permissions its selected consumer needs. Prefer provider
+resource-scoped controls where supported; otherwise tenant-wide grants remain
+visible deployment authority and are not narrowed by Kyyn's request boundary.
 
 The Salesforce provider and SOQL source also support delegated and workload
 principals. A workload Connection uses the `client-secret` recipe: the accepted

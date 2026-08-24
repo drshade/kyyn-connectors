@@ -131,6 +131,16 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0cc23270f6e1808e30a928bdc84dea0b9b4136a8bc82338574f23baf47bbd280"
 
 [[package]]
+name = "graph-population"
+version = "0.1.0"
+dependencies = [
+ "graph-population-fixture",
+ "ron",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "graph-population-fixture"
 version = "0.1.0"
 dependencies = [
@@ -371,6 +381,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "kyyn-component-graph-org-calendar"
+version = "0.1.0"
+dependencies = [
+ "graph-population",
+ "kyyn-source-bundle",
+ "ron",
+ "serde_json",
+ "wit-bindgen",
+]
+
+[[package]]
 name = "kyyn-component-microsoft-connection"
 version = "0.1.0"
 dependencies = [
@@ -439,6 +460,15 @@ dependencies = [
  "glob",
  "ron",
  "serde",
+ "wit-bindgen",
+]
+
+[[package]]
+name = "kyyn-configurator-graph-population"
+version = "0.1.0"
+dependencies = [
+ "graph-population",
+ "ron",
  "wit-bindgen",
 ]
 

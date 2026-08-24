@@ -304,7 +304,7 @@ mod contract {
         assert_eq!(manifest.connector_manifest, 1);
         assert_eq!(manifest.connections.len(), 2, "two account providers");
         assert_eq!(manifest.sinks.len(), 3, "three first-party sinks");
-        assert_eq!(manifest.sources.len(), 9, "nine first-party sources");
+        assert_eq!(manifest.sources.len(), 10, "ten first-party sources");
         let mut provider_names = HashSet::new();
         for connection in &manifest.connections {
             assert!(
@@ -698,7 +698,11 @@ mod contract {
                 .iter()
                 .filter(|source| {
                     source.connection.as_ref().is_some_and(|requirement| {
-                        requirement.provider == "microsoft" && source.name != "microsoft-files"
+                        requirement.provider == "microsoft"
+                            && !matches!(
+                                source.name.as_str(),
+                                "microsoft-files" | "graph-org-calendar"
+                            )
                     })
                 })
                 .all(
@@ -706,6 +710,24 @@ mod contract {
                         == [ConnectionPrincipalClass::DelegatedHuman]
                 )
         );
+        let graph_org_calendar = manifest
+            .sources
+            .iter()
+            .find(|source| source.name == "graph-org-calendar")
+            .expect("workload population calendar is advertised");
+        assert_eq!(
+            graph_org_calendar.connection.as_ref().unwrap().capabilities,
+            ["calendar-read", "directory-users-read"]
+        );
+        assert_eq!(
+            graph_org_calendar
+                .connection
+                .as_ref()
+                .unwrap()
+                .principal_classes,
+            [ConnectionPrincipalClass::WorkloadApplication]
+        );
+        assert!(graph_org_calendar.configurator.is_some());
         let salesforce = manifest
             .sources
             .iter()
@@ -1083,10 +1105,14 @@ mod contract {
                         _ => {}
                     }
                 }
+                let expected = if configurator.requests.is_empty() {
+                    BTreeSet::new()
+                } else {
+                    BTreeSet::from(["http".into()])
+                };
                 assert_eq!(
-                    imports,
-                    BTreeSet::from(["http".into()]),
-                    "{} configurator must import only bounded HTTP",
+                    imports, expected,
+                    "{} configurator imports must match its request authority",
                     source.name
                 );
             }

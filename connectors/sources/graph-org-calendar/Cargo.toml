@@ -1,0 +1,15 @@
+[package]
+name = "kyyn-component-graph-org-calendar"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+[lib]
+crate-type = ["cdylib"]
+
+[target.'cfg(all(target_arch = "wasm32", target_os = "unknown"))'.dependencies]
+graph-population = { path = "../../../crates/graph-population" }
+kyyn-source-bundle = { path = "../../../crates/kyyn-source-bundle" }
+ron = "0.12"
+serde_json = "1"
+wit-bindgen = "=0.58.0"
