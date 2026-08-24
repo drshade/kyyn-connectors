@@ -182,6 +182,51 @@ pub struct CalendarRun {
     pub events: Vec<PopulationEvent>,
 }
 
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MeetingRun {
+    pub roster: Vec<RosterMember>,
+    pub meetings: Vec<PopulationMeeting>,
+}
+
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PopulationMeeting {
+    pub id: String,
+    pub member_id: String,
+    pub member_user_principal_name: String,
+    pub provider_event_id: String,
+    pub calendar_event: Value,
+    pub online_meeting: Option<Value>,
+    pub transcripts: Vec<TranscriptArtifact>,
+    pub attendance: Vec<AttendanceArtifact>,
+    pub diagnostics: Vec<ArtifactDiagnostic>,
+}
+
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TranscriptArtifact {
+    pub id: String,
+    pub created_date_time: Option<String>,
+    pub media_type: String,
+    pub content: String,
+}
+
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AttendanceArtifact {
+    pub report_id: String,
+    pub records: Vec<Value>,
+}
+
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ArtifactDiagnostic {
+    pub artifact: String,
+    pub outcome: String,
+    pub provider_code: Option<String>,
+}
+
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct GraphUser {
@@ -260,6 +305,243 @@ pub fn fetch_calendar<T: Transport>(
     events.sort_by(|left, right| left.id.cmp(&right.id));
     events.dedup_by(|left, right| left.id == right.id);
     Ok(CalendarRun { roster, events })
+}
+
+pub fn fetch_meetings<T: Transport>(
+    transport: &mut T,
+    config: &PopulationConfig,
+    start: &str,
+    until: &str,
+) -> Result<MeetingRun, String> {
+    config.validate()?;
+    let mut roster = resolve_roster(transport, &config.scope)?;
+    let mut meetings = Vec::new();
+    for member in &mut roster {
+        let path = format!(
+            "/v1.0/users/{}/calendarView?startDateTime={}&endDateTime={}&$top=500",
+            encode_segment(&member.id),
+            encode_query_value(start),
+            encode_query_value(until)
+        );
+        let events = match get_collection(transport, &path, "Graph meeting calendar paging") {
+            Ok(events) => events,
+            Err(error) if error.starts_with("mailbox-unavailable:") => {
+                member.observation = MemberObservation::MailboxUnavailable {
+                    provider_code: error
+                        .strip_prefix("mailbox-unavailable:")
+                        .and_then(|code| (!code.is_empty()).then(|| code.to_string())),
+                };
+                continue;
+            }
+            Err(error) => return Err(error),
+        };
+        for event in events {
+            let Some(join_url) = event
+                .get("onlineMeeting")
+                .and_then(|meeting| meeting.get("joinUrl"))
+                .and_then(Value::as_str)
+                .filter(|url| !url.is_empty())
+            else {
+                continue;
+            };
+            let provider_event_id = event
+                .get("id")
+                .and_then(Value::as_str)
+                .filter(|id| !id.is_empty())
+                .ok_or_else(|| "Graph meeting event has no identity".to_string())?;
+            let id = format!("{}:{}", member.id, provider_event_id);
+            let lookup = format!(
+                "/v1.0/users/{}/onlineMeetings?$filter=JoinWebUrl%20eq%20'{}'",
+                encode_segment(&member.id),
+                encode_strict_query_value(join_url)
+            );
+            let resolved = get_collection(transport, &lookup, "Graph meeting lookup paging")?;
+            if resolved.len() > 1 {
+                return Err("Graph meeting lookup returned an ambiguous identity".into());
+            }
+            let Some(online_meeting) = resolved.into_iter().next() else {
+                meetings.push(PopulationMeeting {
+                    id,
+                    member_id: member.id.clone(),
+                    member_user_principal_name: member.user_principal_name.clone(),
+                    provider_event_id: provider_event_id.into(),
+                    calendar_event: event,
+                    online_meeting: None,
+                    transcripts: Vec::new(),
+                    attendance: Vec::new(),
+                    diagnostics: vec![unavailable("meeting-metadata", None)],
+                });
+                continue;
+            };
+            let meeting_id = online_meeting
+                .get("id")
+                .and_then(Value::as_str)
+                .filter(|id| !id.is_empty())
+                .ok_or_else(|| "Graph online meeting has no identity".to_string())?;
+            let (transcripts, transcript_diagnostic) =
+                fetch_transcripts(transport, &member.id, meeting_id)?;
+            let (attendance, attendance_diagnostic) =
+                fetch_attendance(transport, &member.id, meeting_id)?;
+            let mut diagnostics = Vec::new();
+            if let Some(diagnostic) = transcript_diagnostic {
+                diagnostics.push(diagnostic);
+            }
+            if let Some(diagnostic) = attendance_diagnostic {
+                diagnostics.push(diagnostic);
+            }
+            meetings.push(PopulationMeeting {
+                id,
+                member_id: member.id.clone(),
+                member_user_principal_name: member.user_principal_name.clone(),
+                provider_event_id: provider_event_id.into(),
+                calendar_event: event,
+                online_meeting: Some(online_meeting),
+                transcripts,
+                attendance,
+                diagnostics,
+            });
+        }
+    }
+    roster.sort_by(|left, right| {
+        left.user_principal_name
+            .cmp(&right.user_principal_name)
+            .then_with(|| left.id.cmp(&right.id))
+    });
+    meetings.sort_by(|left, right| left.id.cmp(&right.id));
+    meetings.dedup_by(|left, right| left.id == right.id);
+    Ok(MeetingRun { roster, meetings })
+}
+
+fn fetch_transcripts<T: Transport>(
+    transport: &mut T,
+    user_id: &str,
+    meeting_id: &str,
+) -> Result<(Vec<TranscriptArtifact>, Option<ArtifactDiagnostic>), String> {
+    let path = format!(
+        "/v1.0/users/{}/onlineMeetings/{}/transcripts",
+        encode_segment(user_id),
+        encode_segment(meeting_id)
+    );
+    let metadata = match get_optional_collection(transport, &path, "Graph transcript paging")? {
+        Ok(metadata) => metadata,
+        Err(code) => return Ok((Vec::new(), Some(unavailable("transcript", code)))),
+    };
+    if metadata.is_empty() {
+        return Ok((Vec::new(), Some(unavailable("transcript", None))));
+    }
+    let mut artifacts = Vec::with_capacity(metadata.len());
+    for transcript in metadata {
+        let transcript_id = transcript
+            .get("id")
+            .and_then(Value::as_str)
+            .filter(|id| !id.is_empty())
+            .ok_or_else(|| "Graph transcript has no identity".to_string())?;
+        let content_path = format!(
+            "/v1.0/users/{}/onlineMeetings/{}/transcripts/{}/content",
+            encode_segment(user_id),
+            encode_segment(meeting_id),
+            encode_segment(transcript_id)
+        );
+        let first = get_content(transport, &content_path, "text/vtt")?;
+        let response = if first.status == 403
+            && provider_inner_error_code(&first.body).as_deref()
+                == Some("SpeakerAttributionNotAllowed")
+        {
+            get_content(
+                transport,
+                &content_path,
+                "application/vnd.microsoft.graph.transcript+text",
+            )?
+        } else {
+            first
+        };
+        if response.status == 403 || response.status == 404 {
+            return Ok((
+                artifacts,
+                Some(unavailable(
+                    "transcript",
+                    provider_inner_error_code(&response.body)
+                        .or_else(|| provider_error_code(&response.body)),
+                )),
+            ));
+        }
+        if !(200..300).contains(&response.status) {
+            return Err(format!(
+                "Graph transcript observation failed (HTTP {})",
+                response.status
+            ));
+        }
+        let content = String::from_utf8(response.body)
+            .map_err(|_| "Graph transcript content was not UTF-8".to_string())?;
+        artifacts.push(TranscriptArtifact {
+            id: transcript_id.into(),
+            created_date_time: transcript
+                .get("createdDateTime")
+                .and_then(Value::as_str)
+                .map(str::to_string),
+            media_type: response
+                .headers
+                .get("content-type")
+                .cloned()
+                .unwrap_or_else(|| "text/vtt".into()),
+            content,
+        });
+    }
+    Ok((artifacts, None))
+}
+
+fn fetch_attendance<T: Transport>(
+    transport: &mut T,
+    user_id: &str,
+    meeting_id: &str,
+) -> Result<(Vec<AttendanceArtifact>, Option<ArtifactDiagnostic>), String> {
+    let path = format!(
+        "/v1.0/users/{}/onlineMeetings/{}/attendanceReports",
+        encode_segment(user_id),
+        encode_segment(meeting_id)
+    );
+    let reports = match get_optional_collection(transport, &path, "Graph attendance paging")? {
+        Ok(reports) => reports,
+        Err(code) => return Ok((Vec::new(), Some(unavailable("attendance", code)))),
+    };
+    if reports.is_empty() {
+        return Ok((Vec::new(), Some(unavailable("attendance", None))));
+    }
+    let mut artifacts = Vec::with_capacity(reports.len());
+    for report in reports {
+        let report_id = report
+            .get("id")
+            .and_then(Value::as_str)
+            .filter(|id| !id.is_empty())
+            .ok_or_else(|| "Graph attendance report has no identity".to_string())?;
+        let records_path = format!(
+            "/v1.0/users/{}/onlineMeetings/{}/attendanceReports/{}/attendanceRecords",
+            encode_segment(user_id),
+            encode_segment(meeting_id),
+            encode_segment(report_id)
+        );
+        let records = match get_optional_collection(
+            transport,
+            &records_path,
+            "Graph attendance-record paging",
+        )? {
+            Ok(records) => records,
+            Err(code) => return Ok((artifacts, Some(unavailable("attendance", code)))),
+        };
+        artifacts.push(AttendanceArtifact {
+            report_id: report_id.into(),
+            records,
+        });
+    }
+    Ok((artifacts, None))
+}
+
+fn unavailable(artifact: &str, provider_code: Option<String>) -> ArtifactDiagnostic {
+    ArtifactDiagnostic {
+        artifact: artifact.into(),
+        outcome: "unavailable".into(),
+        provider_code,
+    }
 }
 
 fn resolve_roster<T: Transport>(
@@ -378,6 +660,76 @@ fn get_json<D: for<'de> Deserialize<'de>, T: Transport>(
     serde_json::from_slice(&response.body).map_err(|_| "Graph returned invalid JSON".into())
 }
 
+fn get_collection<T: Transport>(
+    transport: &mut T,
+    path: &str,
+    paging_label: &str,
+) -> Result<Vec<Value>, String> {
+    match get_optional_collection(transport, path, paging_label)? {
+        Ok(values) => Ok(values),
+        Err(code) if path.contains("/calendarView") => {
+            Err(format!("mailbox-unavailable:{}", code.unwrap_or_default()))
+        }
+        Err(code) => Err(format!("not-found:{}", code.unwrap_or_default())),
+    }
+}
+
+fn get_optional_collection<T: Transport>(
+    transport: &mut T,
+    path: &str,
+    paging_label: &str,
+) -> Result<Result<Vec<Value>, Option<String>>, String> {
+    let mut next = Some(path.to_string());
+    let mut values = Vec::new();
+    let mut pages = 0;
+    while let Some(path) = next {
+        let response = request_with_retry(
+            transport,
+            &Request {
+                method: Method::Get,
+                path,
+                headers: BTreeMap::from([("accept".into(), "application/json".into())]),
+                body: None,
+            },
+        )?;
+        if response.status == 403 || response.status == 404 {
+            return Ok(Err(provider_inner_error_code(&response.body)
+                .or_else(|| provider_error_code(&response.body))));
+        }
+        if !(200..300).contains(&response.status) {
+            return Err(format!(
+                "Graph observation failed (HTTP {})",
+                response.status
+            ));
+        }
+        let page: Collection<Value> = serde_json::from_slice(&response.body)
+            .map_err(|_| "Graph returned invalid JSON".to_string())?;
+        values.extend(page.value);
+        next = page.next_link.map(|url| graph_path(&url)).transpose()?;
+        pages += 1;
+        if pages > MAX_PAGES {
+            return Err(format!("{paging_label} exceeded its ceiling"));
+        }
+    }
+    Ok(Ok(values))
+}
+
+fn get_content<T: Transport>(
+    transport: &mut T,
+    path: &str,
+    accept: &str,
+) -> Result<Response, String> {
+    request_with_retry(
+        transport,
+        &Request {
+            method: Method::Get,
+            path: path.into(),
+            headers: BTreeMap::from([("accept".into(), accept.into())]),
+            body: None,
+        },
+    )
+}
+
 fn request_with_retry<T: Transport>(
     transport: &mut T,
     request: &Request,
@@ -415,6 +767,25 @@ fn provider_error_code(body: &[u8]) -> Option<String> {
     Some(code.to_string())
 }
 
+fn provider_inner_error_code(body: &[u8]) -> Option<String> {
+    let value = serde_json::from_slice::<Value>(body).ok()?;
+    let code = value
+        .get("error")?
+        .get("innerError")?
+        .get("code")?
+        .as_str()
+        .filter(|code| safe_provider_code(code))?;
+    Some(code.to_string())
+}
+
+fn safe_provider_code(code: &str) -> bool {
+    !code.is_empty()
+        && code.len() <= 128
+        && code
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_' | b'.'))
+}
+
 fn graph_path(url: &str) -> Result<String, String> {
     url.strip_prefix("https://graph.microsoft.com")
         .filter(|path| path.starts_with("/v1.0/"))
@@ -428,6 +799,10 @@ fn encode_segment(value: &str) -> String {
 
 fn encode_query_value(value: &str) -> String {
     percent_encode(value, true)
+}
+
+fn encode_strict_query_value(value: &str) -> String {
+    percent_encode(value, false)
 }
 
 fn percent_encode(value: &str, allow_colon: bool) -> String {
@@ -477,6 +852,9 @@ mod tests {
                 let exchange = self.exchanges.pop_front().expect("unexpected request");
                 assert_eq!(exchange.request.method, FixtureMethod::Get);
                 assert_eq!(exchange.request.path, request.path);
+                for (name, value) in &exchange.request.headers {
+                    assert_eq!(request.headers.get(name), Some(value));
+                }
                 self.current_responses = exchange.responses.into();
             }
             let response = self
@@ -578,6 +956,43 @@ mod tests {
         assert_eq!(error, "Graph observation failed (HTTP 503)");
         assert!(transport.exhausted());
         assert_eq!(transport.sleeps.len(), 4);
+    }
+
+    #[test]
+    fn meeting_artifacts_use_member_routes_and_keep_unavailable_outcomes() {
+        let fixture = graph_population_fixture::scenario("meeting-artifacts-mixed-availability");
+        let expected = fixture.expected.clone();
+        let users = match &fixture.scope {
+            graph_population_fixture::Scope::SelectedMembers { users } => users.clone(),
+            _ => panic!("selected fixture"),
+        };
+        let mut transport = FixtureTransport::new(fixture);
+        let run = fetch_meetings(
+            &mut transport,
+            &PopulationConfig {
+                scope: MemberScope::SelectedMembers { users },
+            },
+            "2026-08-01T00:00:00Z",
+            "2026-08-02T00:00:00Z",
+        )
+        .unwrap();
+        assert!(transport.exhausted());
+        assert_eq!(run.meetings.len(), expected.item_count);
+        assert_eq!(run.meetings[0].transcripts.len(), 1);
+        assert_eq!(
+            run.meetings[0].transcripts[0].media_type,
+            "application/vnd.microsoft.graph.transcript+text"
+        );
+        assert_eq!(run.meetings[0].attendance.len(), 1);
+        assert!(run.meetings[0].diagnostics.is_empty());
+        assert!(run.meetings[1].transcripts.is_empty());
+        assert!(run.meetings[1].attendance.is_empty());
+        assert_eq!(run.meetings[1].diagnostics.len(), 2);
+        assert!(
+            run.meetings
+                .iter()
+                .all(|meeting| meeting.member_id == "user-alpha")
+        );
     }
 
     #[test]
