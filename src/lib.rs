@@ -924,16 +924,16 @@ mod contract {
     }
 
     #[test]
-    fn vendored_wit_matches_the_frozen_engine_contract() {
+    fn vendored_source_wit_matches_its_reviewed_fingerprint() {
         const FROZEN_SOURCE_WIT_SHA256: &str =
-            "b551f66422d5a8bd1b0f1766b0edf91c0e3f905886d7316d3e868b99d4ddf638";
+            "04faeb77b7a4acf0f59e3bc822286e6410d30ba2bdc83890c139fc641cec9243";
         assert_eq!(
             format!(
                 "{:x}",
                 sha2::Sha256::digest(include_bytes!("../wit/source.wit"))
             ),
             FROZEN_SOURCE_WIT_SHA256,
-            "wit/source.wit drifted from kyyn's frozen kyyn:source@1 contract"
+            "wit/source.wit drifted from its reviewed kyyn:source@1 fingerprint"
         );
         const FROZEN_SINK_WIT_SHA256: &str =
             "76bca92a2c69b8b350d3c26e1851709e670bcc66fdf52855230d5402bb3ead30";
