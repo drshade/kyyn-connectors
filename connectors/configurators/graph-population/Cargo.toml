@@ -1,0 +1,15 @@
+[package]
+name = "kyyn-configurator-graph-population"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+graph-population = { path = "../../../crates/graph-population" }
+ron = "0.12"
+
+[target.'cfg(all(target_arch = "wasm32", target_os = "unknown"))'.dependencies]
+wit-bindgen = "=0.58.0"

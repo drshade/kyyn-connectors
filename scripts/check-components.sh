@@ -49,10 +49,10 @@ else
 fi
 flock -u 9
 
-source_guests="sweep git-repo pack salesforce graph-calendar graph-mail graph-chats graph-meetings microsoft-files"
+source_guests="sweep git-repo pack salesforce graph-calendar graph-mail graph-chats graph-meetings graph-org-calendar microsoft-files"
 sink_guests="file-replace git-ref microsoft-file-replace"
 connection_guests="microsoft-connection salesforce-connection"
-configurator_guests="microsoft-files"
+configurator_guests="microsoft-files graph-population"
 source_packages=""
 sink_packages=""
 connection_packages=""

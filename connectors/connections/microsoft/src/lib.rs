@@ -49,6 +49,7 @@ fn normalized_capabilities(capabilities: &[String]) -> Result<Vec<String>, Strin
     const KNOWN: &[&str] = &[
         "calendar-read",
         "chats-read",
+        "directory-users-read",
         "files-read",
         "files-write",
         "mail-read",
@@ -82,6 +83,9 @@ fn scopes(capabilities: &[String]) -> Result<String, String> {
             }
             "chats-read" => {
                 scopes.insert("Chat.Read");
+            }
+            "directory-users-read" => {
+                scopes.insert("User.Read.All");
             }
             "meetings-read" => {
                 scopes.insert("Calendars.Read");
@@ -474,6 +478,10 @@ mod tests {
         );
         assert!(normalized_capabilities(&["mail-read".into(), "mail-read".into()]).is_err());
         assert!(normalized_capabilities(&["directory-admin".into()]).is_err());
+        assert_eq!(
+            scopes(&["directory-users-read".into()]).unwrap(),
+            "User.Read User.Read.All offline_access"
+        );
     }
 
     #[test]

@@ -17,6 +17,7 @@ wasmparser = "=0.251.0"
 resolver = "2"
 members = [
     "connectors/configurators/microsoft-files",
+    "connectors/configurators/graph-population",
     "connectors/connections/microsoft",
     "connectors/connections/salesforce",
     "connectors/sinks/file-replace",
@@ -26,12 +27,14 @@ members = [
     "connectors/sources/graph-chats",
     "connectors/sources/graph-mail",
     "connectors/sources/graph-meetings",
+    "connectors/sources/graph-org-calendar",
     "connectors/sources/git-repo",
     "connectors/sources/pack",
     "connectors/sources/salesforce",
     "connectors/sources/microsoft-files",
     "connectors/sources/sweep",
     "crates/graph-population-fixture",
+    "crates/graph-population",
     "crates/kyyn-source-bundle",
     "tools/connector-componentize",
 ]
