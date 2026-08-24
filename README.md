@@ -84,6 +84,15 @@ Exchange resource scope without a concurrent tenant-wide calendar role that
 would undo it. Directory user read remains tenant-wide and is disclosed as
 such.
 
+`graph-org-meetings` reuses that governed population but remains a separate
+workload-only consumer with its own reviewed authority. It discovers candidate
+online meetings from member-addressed calendars, resolves them under the same
+canonical member identity, and records available transcript content and
+attendance records. Missing, expired or policy-refused artifacts remain bounded
+evidence diagnostics; they are never presented as proof that no meeting
+occurred. Selected populations require the corresponding Teams application
+access policy in addition to the tenant-wide directory read grant.
+
 The original mail, calendar, chats, and meetings connectors retain
 delegated-only `/me` semantics. `microsoft-files` and
 `microsoft-file-replace` remain dual-principal. The Entra administrator must
