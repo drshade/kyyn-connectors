@@ -8,8 +8,8 @@ mod guest {
     }
 
     use bindings::exports::kyyn::source::api::{
-        AuthChallenge, AuthPollResult, AuthStatus, ConnectorDescribe, FetchRequest, FetchResult,
-        FetchStyle, Guest, Item, RunSpec,
+        AuthChallenge, AuthPollResult, AuthStatus, ConnectorDescribe, FetchCompletion,
+        FetchRequest, FetchResult, FetchStyle, Guest, Item, RunSpec,
     };
     use bindings::kyyn::source::{control, repo};
     use serde::Deserialize;
@@ -112,6 +112,7 @@ mod guest {
             let short = &config.rev[..12];
             if request.checkpoint.as_deref() == Some(config.rev.as_str()) {
                 return Ok(FetchResult {
+                    completion: FetchCompletion::Complete,
                     items: Vec::new(),
                     notes: format!("pack '{}' unchanged at {short}", config.template),
                     next_checkpoint: Some(config.rev),
@@ -171,6 +172,7 @@ mod guest {
                 items.len()
             ));
             Ok(FetchResult {
+                completion: FetchCompletion::Complete,
                 items,
                 notes: format!("pack '{}' at {short}", config.template),
                 next_checkpoint: Some(config.rev),

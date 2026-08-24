@@ -926,7 +926,7 @@ mod contract {
     #[test]
     fn vendored_wit_matches_the_frozen_engine_contract() {
         const FROZEN_SOURCE_WIT_SHA256: &str =
-            "88852bf6838f71b8001a785e2a5ff4fcaeb6b613594aab9323d3cf17ca52301a";
+            "b551f66422d5a8bd1b0f1766b0edf91c0e3f905886d7316d3e868b99d4ddf638";
         assert_eq!(
             format!(
                 "{:x}",

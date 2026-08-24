@@ -1,4 +1,4 @@
-package kyyn:source@1.0.0;
+package kyyn:source@1.1.0;
 
 /// Ambient-authority-free utilities every connector may use.
 interface control {
@@ -228,7 +228,23 @@ interface api {
         meta: string,
     }
 
+    record pending {
+        /// Provider hint for an external scheduler; Kyyn never sleeps or
+        /// schedules the next invocation from this value.
+        retry-after-seconds: option<u32>,
+    }
+
+    variant fetch-completion {
+        /// The requested run spec was fully observed, even when it yielded no
+        /// items. A published complete window may advance.
+        complete,
+        /// Remote read preparation is durable but not complete. Pending
+        /// results carry no items and require a successor checkpoint.
+        pending(pending),
+    }
+
     record fetch-result {
+        completion: fetch-completion,
         items: list<item>,
         notes: string,
         next-checkpoint: option<string>,

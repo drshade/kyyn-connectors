@@ -8,8 +8,8 @@ mod guest {
     }
 
     use bindings::exports::kyyn::source::api::{
-        AuthChallenge, AuthPollResult, AuthStatus, ConnectorDescribe, FetchRequest, FetchResult,
-        FetchStyle, Guest, Item, RunSpec,
+        AuthChallenge, AuthPollResult, AuthStatus, ConnectorDescribe, FetchCompletion,
+        FetchRequest, FetchResult, FetchStyle, Guest, Item, RunSpec,
     };
     use bindings::kyyn::source::{control, repo};
     use serde::Deserialize;
@@ -122,6 +122,7 @@ mod guest {
             let short = &head[..12.min(head.len())];
             if request.checkpoint.as_deref() == Some(head.as_str()) {
                 return Ok(FetchResult {
+                    completion: FetchCompletion::Complete,
                     items: Vec::new(),
                     notes: format!("unchanged at {short}"),
                     next_checkpoint: Some(head),
@@ -173,6 +174,7 @@ mod guest {
             }
             control::progress(&format!("{} file(s) matched at {short}", items.len()));
             Ok(FetchResult {
+                completion: FetchCompletion::Complete,
                 items,
                 notes: notes.join("; "),
                 next_checkpoint: Some(head),

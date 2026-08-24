@@ -30,8 +30,8 @@ mod guest {
 
     use super::parse_connection_config;
     use bindings::exports::kyyn::source::api::{
-        AuthChallenge, AuthPollResult, AuthStatus, ConnectorDescribe, FetchRequest, FetchResult,
-        FetchStyle, Guest, Item, RunSpec,
+        AuthChallenge, AuthPollResult, AuthStatus, ConnectorDescribe, FetchCompletion,
+        FetchRequest, FetchResult, FetchStyle, Guest, Item, RunSpec,
     };
     use bindings::kyyn::source::http::{self, Method, Purpose, Request, Response};
     use bindings::kyyn::source::{control, evidence};
@@ -267,6 +267,7 @@ mod guest {
         }
         control::progress(&format!("{} records returned", items.len()));
         Ok(FetchResult {
+            completion: FetchCompletion::Complete,
             notes: format!("{} record(s) from SOQL", items.len()),
             items,
             next_checkpoint: None,

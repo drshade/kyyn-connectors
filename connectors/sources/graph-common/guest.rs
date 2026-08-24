@@ -8,8 +8,8 @@ mod guest {
     }
 
     use bindings::exports::kyyn::source::api::{
-        AuthChallenge, AuthPollResult, AuthStatus, FetchRequest, FetchResult, FetchStyle, Guest,
-        Item, ConnectorDescribe, RunSpec,
+        AuthChallenge, AuthPollResult, AuthStatus, ConnectorDescribe, FetchCompletion,
+        FetchRequest, FetchResult, FetchStyle, Guest, Item, RunSpec,
     };
     use bindings::kyyn::source::http::{self, Method, Purpose, Request, Response};
     use bindings::kyyn::source::{control, evidence};
@@ -370,6 +370,7 @@ mod guest {
             .collect::<Result<Vec<_>, String>>()?;
         control::progress(&format!("{} events in window", items.len()));
         Ok(FetchResult {
+            completion: FetchCompletion::Complete,
             notes: format!("{} events", items.len()),
             items,
             next_checkpoint: None,
@@ -665,6 +666,7 @@ mod guest {
             .collect::<Result<Vec<_>, String>>()?;
         control::progress(&format!("{} messages in window", items.len()));
         Ok(FetchResult {
+            completion: FetchCompletion::Complete,
             notes: format!("{} emails", items.len()),
             items,
             next_checkpoint: None,
@@ -868,6 +870,7 @@ mod guest {
             }
         }
         Ok(FetchResult {
+            completion: FetchCompletion::Complete,
             notes: format!("{} chat messages in window", items.len()),
             items,
             next_checkpoint: None,
@@ -1204,6 +1207,7 @@ mod guest {
             })
             .collect::<Result<Vec<_>, String>>()?;
         Ok(FetchResult {
+            completion: FetchCompletion::Complete,
             notes: format!("{} meetings (artifacts where organizer)", items.len()),
             items,
             next_checkpoint: None,
@@ -1301,6 +1305,7 @@ mod guest {
                 |(version, previous)| version == previous,
             ) {
                 return Ok(FetchResult {
+                    completion: FetchCompletion::Complete,
                     items: Vec::new(),
                     notes: format!("'{}' unchanged", root.name),
                     next_checkpoint: checkpoint,
@@ -1308,6 +1313,7 @@ mod guest {
             }
             if root.size.is_some_and(|size| size > config.max_file_bytes) {
                 return Ok(FetchResult {
+                    completion: FetchCompletion::Complete,
                     items: Vec::new(),
                     notes: format!("skipped '{}' (over size cap)", root.name),
                     next_checkpoint: checkpoint,
@@ -1325,6 +1331,7 @@ mod guest {
                 && checkpoint.as_deref() == Some(stored.sha256.as_str())
             {
                 return Ok(FetchResult {
+                    completion: FetchCompletion::Complete,
                     items: Vec::new(),
                     notes: format!("'{name}' unchanged (content hash match)"),
                     next_checkpoint: Some(stored.sha256),
@@ -1334,6 +1341,7 @@ mod guest {
                 .clone()
                 .unwrap_or_else(|| stored.sha256.clone());
             return Ok(FetchResult {
+                completion: FetchCompletion::Complete,
                 items: vec![Item {
                     id: sharing_url.into(),
                     kind: config.kind.clone(),
@@ -1458,6 +1466,7 @@ mod guest {
             format!("{} new/changed, {unchanged} unchanged", items.len()),
         );
         Ok(FetchResult {
+            completion: FetchCompletion::Complete,
             items,
             notes: notes.join("; "),
             next_checkpoint: Some(ron::to_string(&next).map_err(|error| error.to_string())?),
