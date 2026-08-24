@@ -8,8 +8,8 @@ mod guest {
     }
 
     use bindings::exports::kyyn::source::api::{
-        AuthChallenge, AuthPollResult, AuthStatus, ConnectorDescribe, FetchRequest, FetchResult,
-        FetchStyle, Guest, Item, RunSpec,
+        AuthChallenge, AuthPollResult, AuthStatus, ConnectorDescribe, FetchCompletion,
+        FetchRequest, FetchResult, FetchStyle, Guest, Item, RunSpec,
     };
     use bindings::kyyn::source::{control, local};
     use serde::Deserialize;
@@ -153,6 +153,7 @@ mod guest {
             }
             control::progress(&format!("swept {} file(s)", items.len()));
             Ok(FetchResult {
+                completion: FetchCompletion::Complete,
                 items,
                 notes: notes.join("; "),
                 next_checkpoint: None,

@@ -8,8 +8,8 @@ mod guest {
     }
 
     use bindings::exports::kyyn::source::api::{
-        AuthChallenge, AuthPollResult, AuthStatus, ConnectorDescribe, FetchRequest, FetchResult,
-        FetchStyle, Guest, Item, RunSpec,
+        AuthChallenge, AuthPollResult, AuthStatus, ConnectorDescribe, FetchCompletion,
+        FetchRequest, FetchResult, FetchStyle, Guest, Item, RunSpec,
     };
     use bindings::kyyn::source::control;
     use bindings::kyyn::source::http::{self, Method, Purpose, Request, Response};
@@ -566,6 +566,7 @@ mod guest {
         );
         control::progress(&accumulator.notes[0]);
         Ok(FetchResult {
+            completion: FetchCompletion::Complete,
             items: accumulator.items,
             notes: accumulator.notes.join("; "),
             next_checkpoint: Some(
