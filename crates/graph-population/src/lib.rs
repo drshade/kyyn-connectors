@@ -245,6 +245,34 @@ struct Collection<T> {
     next_link: Option<String>,
 }
 
+#[derive(Clone, Copy)]
+enum MissingOutcome {
+    Unavailable,
+    NotFound,
+}
+
+enum ObservationError {
+    Unavailable(Option<String>),
+    NotFound(Option<String>),
+    Failed(String),
+}
+
+impl ObservationError {
+    fn into_failure(self) -> String {
+        match self {
+            Self::Unavailable(code) => format!(
+                "Graph resource is unavailable{}",
+                code.map(|code| format!(" ({code})")).unwrap_or_default()
+            ),
+            Self::NotFound(code) => format!(
+                "Graph resource was not found{}",
+                code.map(|code| format!(" ({code})")).unwrap_or_default()
+            ),
+            Self::Failed(error) => error,
+        }
+    }
+}
+
 pub fn fetch_calendar<T: Transport>(
     transport: &mut T,
     config: &PopulationConfig,
@@ -261,17 +289,14 @@ pub fn fetch_calendar<T: Transport>(
             encode_query_value(start),
             encode_query_value(until)
         );
-        match get_json::<Collection<Value>, _>(transport, &path) {
-            Ok(page) => {
-                let mut pages = vec![page];
-                while let Some(next) = pages.last().and_then(|page| page.next_link.as_deref()) {
-                    let next = graph_path(next)?;
-                    pages.push(get_json(transport, &next)?);
-                    if pages.len() > MAX_PAGES {
-                        return Err("Graph calendar paging exceeded its ceiling".into());
-                    }
-                }
-                for event in pages.into_iter().flat_map(|page| page.value) {
+        match get_collection(
+            transport,
+            &path,
+            "Graph calendar paging",
+            MissingOutcome::Unavailable,
+        ) {
+            Ok(observed) => {
+                for event in observed {
                     let provider_event_id = event
                         .get("id")
                         .and_then(Value::as_str)
@@ -287,14 +312,10 @@ pub fn fetch_calendar<T: Transport>(
                     });
                 }
             }
-            Err(error) if error.starts_with("mailbox-unavailable:") => {
-                member.observation = MemberObservation::MailboxUnavailable {
-                    provider_code: error
-                        .strip_prefix("mailbox-unavailable:")
-                        .and_then(|code| (!code.is_empty()).then(|| code.to_string())),
-                };
+            Err(ObservationError::Unavailable(provider_code)) => {
+                member.observation = MemberObservation::MailboxUnavailable { provider_code };
             }
-            Err(error) => return Err(error),
+            Err(error) => return Err(error.into_failure()),
         }
     }
     roster.sort_by(|left, right| {
@@ -323,17 +344,18 @@ pub fn fetch_meetings<T: Transport>(
             encode_query_value(start),
             encode_query_value(until)
         );
-        let events = match get_collection(transport, &path, "Graph meeting calendar paging") {
+        let events = match get_collection(
+            transport,
+            &path,
+            "Graph meeting calendar paging",
+            MissingOutcome::Unavailable,
+        ) {
             Ok(events) => events,
-            Err(error) if error.starts_with("mailbox-unavailable:") => {
-                member.observation = MemberObservation::MailboxUnavailable {
-                    provider_code: error
-                        .strip_prefix("mailbox-unavailable:")
-                        .and_then(|code| (!code.is_empty()).then(|| code.to_string())),
-                };
+            Err(ObservationError::Unavailable(provider_code)) => {
+                member.observation = MemberObservation::MailboxUnavailable { provider_code };
                 continue;
             }
-            Err(error) => return Err(error),
+            Err(error) => return Err(error.into_failure()),
         };
         for event in events {
             let Some(join_url) = event
@@ -355,7 +377,13 @@ pub fn fetch_meetings<T: Transport>(
                 encode_segment(&member.id),
                 encode_strict_query_value(join_url)
             );
-            let resolved = get_collection(transport, &lookup, "Graph meeting lookup paging")?;
+            let resolved = get_collection(
+                transport,
+                &lookup,
+                "Graph meeting lookup paging",
+                MissingOutcome::NotFound,
+            )
+            .map_err(ObservationError::into_failure)?;
             if resolved.len() > 1 {
                 return Err("Graph meeting lookup returned an ambiguous identity".into());
             }
@@ -422,9 +450,17 @@ fn fetch_transcripts<T: Transport>(
         encode_segment(user_id),
         encode_segment(meeting_id)
     );
-    let metadata = match get_optional_collection(transport, &path, "Graph transcript paging")? {
+    let metadata = match get_collection(
+        transport,
+        &path,
+        "Graph transcript paging",
+        MissingOutcome::Unavailable,
+    ) {
         Ok(metadata) => metadata,
-        Err(code) => return Ok((Vec::new(), Some(unavailable("transcript", code)))),
+        Err(ObservationError::Unavailable(code)) => {
+            return Ok((Vec::new(), Some(unavailable("transcript", code))));
+        }
+        Err(error) => return Err(error.into_failure()),
     };
     if metadata.is_empty() {
         return Ok((Vec::new(), Some(unavailable("transcript", None))));
@@ -500,9 +536,17 @@ fn fetch_attendance<T: Transport>(
         encode_segment(user_id),
         encode_segment(meeting_id)
     );
-    let reports = match get_optional_collection(transport, &path, "Graph attendance paging")? {
+    let reports = match get_collection(
+        transport,
+        &path,
+        "Graph attendance paging",
+        MissingOutcome::Unavailable,
+    ) {
         Ok(reports) => reports,
-        Err(code) => return Ok((Vec::new(), Some(unavailable("attendance", code)))),
+        Err(ObservationError::Unavailable(code)) => {
+            return Ok((Vec::new(), Some(unavailable("attendance", code))));
+        }
+        Err(error) => return Err(error.into_failure()),
     };
     if reports.is_empty() {
         return Ok((Vec::new(), Some(unavailable("attendance", None))));
@@ -520,13 +564,17 @@ fn fetch_attendance<T: Transport>(
             encode_segment(meeting_id),
             encode_segment(report_id)
         );
-        let records = match get_optional_collection(
+        let records = match get_collection(
             transport,
             &records_path,
             "Graph attendance-record paging",
-        )? {
+            MissingOutcome::Unavailable,
+        ) {
             Ok(records) => records,
-            Err(code) => return Ok((artifacts, Some(unavailable("attendance", code)))),
+            Err(ObservationError::Unavailable(code)) => {
+                return Ok((artifacts, Some(unavailable("attendance", code))));
+            }
+            Err(error) => return Err(error.into_failure()),
         };
         artifacts.push(AttendanceArtifact {
             report_id: report_id.into(),
@@ -551,11 +599,14 @@ fn resolve_roster<T: Transport>(
     let users = match scope {
         MemberScope::AllMembers => {
             let first = "/v1.0/users?$filter=accountEnabled%20eq%20true%20and%20userType%20eq%20'Member'&$select=id,displayName,userPrincipalName,mail,accountEnabled,userType&$top=999";
-            let mut page: Collection<GraphUser> = get_json(transport, first)?;
+            let mut page: Collection<GraphUser> =
+                get_json(transport, first, MissingOutcome::NotFound)
+                    .map_err(ObservationError::into_failure)?;
             let mut users = page.value;
             let mut pages = 1;
             while let Some(next) = page.next_link {
-                page = get_json(transport, &graph_path(&next)?)?;
+                page = get_json(transport, &graph_path(&next)?, MissingOutcome::NotFound)
+                    .map_err(ObservationError::into_failure)?;
                 users.extend(page.value);
                 pages += 1;
                 if pages > MAX_PAGES {
@@ -571,12 +622,12 @@ fn resolve_roster<T: Transport>(
                     "/v1.0/users/{}?$select=id,displayName,userPrincipalName,mail,accountEnabled,userType",
                     encode_segment(upn)
                 );
-                let user: GraphUser = match get_json(transport, &path) {
+                let user: GraphUser = match get_json(transport, &path, MissingOutcome::NotFound) {
                     Ok(user) => user,
-                    Err(error) if error.starts_with("not-found:") => {
+                    Err(ObservationError::NotFound(_)) => {
                         return Err(format!("selected member '{upn}' was not found"));
                     }
-                    Err(error) => return Err(error),
+                    Err(error) => return Err(error.into_failure()),
                 };
                 if !eligible(&user) {
                     return Err(format!(
@@ -634,7 +685,8 @@ fn eligible(user: &GraphUser) -> bool {
 fn get_json<D: for<'de> Deserialize<'de>, T: Transport>(
     transport: &mut T,
     path: &str,
-) -> Result<D, String> {
+    missing: MissingOutcome,
+) -> Result<D, ObservationError> {
     let response = request_with_retry(
         transport,
         &Request {
@@ -643,42 +695,37 @@ fn get_json<D: for<'de> Deserialize<'de>, T: Transport>(
             headers: BTreeMap::from([("accept".into(), "application/json".into())]),
             body: None,
         },
-    )?;
+    )
+    .map_err(ObservationError::Failed)?;
     if response.status == 404 {
-        let code = provider_error_code(&response.body).unwrap_or_default();
-        if path.contains("/calendarView") {
-            return Err(format!("mailbox-unavailable:{code}"));
-        }
-        return Err(format!("not-found:{code}"));
+        let code = provider_error_code(&response.body);
+        return Err(match missing {
+            MissingOutcome::Unavailable => ObservationError::Unavailable(code),
+            MissingOutcome::NotFound => ObservationError::NotFound(code),
+        });
     }
-    if !(200..300).contains(&response.status) {
-        return Err(format!(
+    if response.status == 403 {
+        return Err(ObservationError::Failed(format!(
             "Graph observation failed (HTTP {})",
             response.status
-        ));
+        )));
     }
-    serde_json::from_slice(&response.body).map_err(|_| "Graph returned invalid JSON".into())
+    if !(200..300).contains(&response.status) {
+        return Err(ObservationError::Failed(format!(
+            "Graph observation failed (HTTP {})",
+            response.status
+        )));
+    }
+    serde_json::from_slice(&response.body)
+        .map_err(|_| ObservationError::Failed("Graph returned invalid JSON".into()))
 }
 
 fn get_collection<T: Transport>(
     transport: &mut T,
     path: &str,
     paging_label: &str,
-) -> Result<Vec<Value>, String> {
-    match get_optional_collection(transport, path, paging_label)? {
-        Ok(values) => Ok(values),
-        Err(code) if path.contains("/calendarView") => {
-            Err(format!("mailbox-unavailable:{}", code.unwrap_or_default()))
-        }
-        Err(code) => Err(format!("not-found:{}", code.unwrap_or_default())),
-    }
-}
-
-fn get_optional_collection<T: Transport>(
-    transport: &mut T,
-    path: &str,
-    paging_label: &str,
-) -> Result<Result<Vec<Value>, Option<String>>, String> {
+    missing: MissingOutcome,
+) -> Result<Vec<Value>, ObservationError> {
     let mut next = Some(path.to_string());
     let mut values = Vec::new();
     let mut pages = 0;
@@ -691,27 +738,38 @@ fn get_optional_collection<T: Transport>(
                 headers: BTreeMap::from([("accept".into(), "application/json".into())]),
                 body: None,
             },
-        )?;
+        )
+        .map_err(ObservationError::Failed)?;
         if response.status == 403 || response.status == 404 {
-            return Ok(Err(provider_inner_error_code(&response.body)
-                .or_else(|| provider_error_code(&response.body))));
+            let code = provider_inner_error_code(&response.body)
+                .or_else(|| provider_error_code(&response.body));
+            return Err(match missing {
+                MissingOutcome::Unavailable => ObservationError::Unavailable(code),
+                MissingOutcome::NotFound => ObservationError::NotFound(code),
+            });
         }
         if !(200..300).contains(&response.status) {
-            return Err(format!(
+            return Err(ObservationError::Failed(format!(
                 "Graph observation failed (HTTP {})",
                 response.status
-            ));
+            )));
         }
         let page: Collection<Value> = serde_json::from_slice(&response.body)
-            .map_err(|_| "Graph returned invalid JSON".to_string())?;
+            .map_err(|_| ObservationError::Failed("Graph returned invalid JSON".into()))?;
         values.extend(page.value);
-        next = page.next_link.map(|url| graph_path(&url)).transpose()?;
+        next = page
+            .next_link
+            .map(|url| graph_path(&url))
+            .transpose()
+            .map_err(ObservationError::Failed)?;
         pages += 1;
         if pages > MAX_PAGES {
-            return Err(format!("{paging_label} exceeded its ceiling"));
+            return Err(ObservationError::Failed(format!(
+                "{paging_label} exceeded its ceiling"
+            )));
         }
     }
-    Ok(Ok(values))
+    Ok(values)
 }
 
 fn get_content<T: Transport>(
