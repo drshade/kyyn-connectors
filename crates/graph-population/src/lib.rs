@@ -8,7 +8,9 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 const MAX_PAGES: usize = 500;
-const MAX_MEMBERS: usize = 100_000;
+// A worst-case accepted 320-byte UPN plus serialization overhead must fit both
+// sides of Kyyn's immutable 1 MiB configurator envelope.
+const MAX_MEMBERS: usize = 3_000;
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
@@ -1569,5 +1571,34 @@ mod tests {
                 .is_err()
             );
         }
+    }
+
+    #[test]
+    fn maximum_selected_population_fits_the_declared_configurator_envelope() {
+        let users = (0..MAX_MEMBERS)
+            .map(|index| format!("{index:04}{}@example.test", "a".repeat(300)))
+            .collect::<Vec<_>>();
+        let input = serde_json::to_vec(&serde_json::json!({
+            "scope_mode": "selected-members",
+            "selected_users": users,
+        }))
+        .unwrap();
+        assert!(input.len() <= 1024 * 1024);
+        let config = PopulationConfig::from_setup(SetupInput {
+            scope_mode: "selected-members".into(),
+            selected_users: users,
+        })
+        .unwrap();
+        assert!(ron::to_string(&config).unwrap().len() <= 1024 * 1024);
+
+        assert!(
+            PopulationConfig::from_setup(SetupInput {
+                scope_mode: "selected-members".into(),
+                selected_users: (0..=MAX_MEMBERS)
+                    .map(|index| format!("member-{index}@example.test"))
+                    .collect(),
+            })
+            .is_err()
+        );
     }
 }
