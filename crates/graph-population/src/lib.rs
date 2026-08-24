@@ -89,6 +89,17 @@ impl PopulationConfig {
             }
         }
     }
+
+    pub fn canonical_identity(&self) -> String {
+        match &self.scope {
+            MemberScope::AllMembers => "AllMembers".into(),
+            MemberScope::SelectedMembers { users } => {
+                let mut users = users.clone();
+                users.sort();
+                format!("SelectedMembers\0{}", users.join("\0"))
+            }
+        }
+    }
 }
 
 fn validate_upn(value: &str) -> Result<(), String> {
@@ -673,10 +684,11 @@ pub fn fetch_audit<T: Transport>(
 ) -> Result<AuditRun, String> {
     config.validate()?;
     validate_audit_display_name(display_name)?;
-    let selected_users = match &config.scope {
+    let mut selected_users = match &config.scope {
         MemberScope::AllMembers => Vec::new(),
         MemberScope::SelectedMembers { users } => users.clone(),
     };
+    selected_users.sort();
     let query = if let Some(checkpoint) = checkpoint {
         let query_id = parse_audit_checkpoint(checkpoint)?;
         get_audit_query(transport, query_id)?
@@ -1406,7 +1418,10 @@ mod tests {
                             "filterEndDateTime": "2026-08-02T00:00:00Z",
                             "recordTypeFilters": ["microsoftTeams"],
                             "operationFilters": ["MeetingDetail", "MeetingParticipantDetail"],
-                            "userPrincipalNameFilters": ["alpha@example.test"]
+                            "userPrincipalNameFilters": [
+                                "alpha@example.test",
+                                "beta@example.test"
+                            ]
                         })),
                     },
                     responses: vec![Response {
@@ -1420,7 +1435,10 @@ mod tests {
                             "filterEndDateTime": "2026-08-02T00:00:00Z",
                             "recordTypeFilters": ["microsoftTeams"],
                             "operationFilters": ["MeetingDetail", "MeetingParticipantDetail"],
-                            "userPrincipalNameFilters": ["alpha@example.test"]
+                            "userPrincipalNameFilters": [
+                                "alpha@example.test",
+                                "beta@example.test"
+                            ]
                         }),
                     }],
                 },
@@ -1431,7 +1449,7 @@ mod tests {
             &mut transport,
             &PopulationConfig {
                 scope: MemberScope::SelectedMembers {
-                    users: vec!["alpha@example.test".into()],
+                    users: vec!["beta@example.test".into(), "alpha@example.test".into()],
                 },
             },
             "2026-08-01T00:00:00Z",
@@ -1442,6 +1460,20 @@ mod tests {
         .unwrap();
         assert!(transport.exhausted());
         assert!(matches!(run.completion, AuditCompletion::Pending { .. }));
+        assert_eq!(
+            PopulationConfig {
+                scope: MemberScope::SelectedMembers {
+                    users: vec!["alpha@example.test".into(), "beta@example.test".into()],
+                },
+            }
+            .canonical_identity(),
+            PopulationConfig {
+                scope: MemberScope::SelectedMembers {
+                    users: vec!["beta@example.test".into(), "alpha@example.test".into()],
+                },
+            }
+            .canonical_identity()
+        );
     }
 
     #[test]

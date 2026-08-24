@@ -165,7 +165,7 @@
             (purpose: Observe, authorization: Connection, authority: "https://graph.microsoft.com", method: Get, path: "/v1.0/security/auditLog/queries/{segment}/records"),
          ]),
          component: "components/sources/graph-audit-meetings.wasm",
-         component_sha256: "4c8202b2baec462cd54ad5936a3cde95a2333ad06a05fa2583ed5d7f74e27666",
+         component_sha256: "da0523253928e5eefea6e97f49c4686b54fbeee2c23cc0fc7fa8c7bc2b5c00d3",
          config: [
             (name: "scope_mode", label: Some("Population"), doc: "Choose every enabled organization member or an explicit selected set.", required: true, example: Some("all-members"), custody: Ephemeral, control: Choice(options: ["all-members", "selected-members"])),
             (name: "selected_users", label: Some("Selected user principal names"), doc: "Lowercase user principal names; required only for Selected members.", ty: StrList, example: Some("member@example.org"), custody: Ephemeral),

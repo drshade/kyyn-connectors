@@ -69,10 +69,10 @@ mod guest {
         Ok(file.finish()?.sha256)
     }
 
-    fn audit_display_name(config: &str, start: &str, until: &str) -> String {
+    fn audit_display_name(config: &PopulationConfig, start: &str, until: &str) -> String {
         let mut digest = Sha256::new();
         digest.update(b"kyyn:graph-audit-meetings:v1\0");
-        digest.update(config.as_bytes());
+        digest.update(config.canonical_identity().as_bytes());
         digest.update(b"\0");
         digest.update(start.as_bytes());
         digest.update(b"\0");
@@ -123,7 +123,7 @@ mod guest {
             let roster_bytes = serde_json::to_vec_pretty(&roster)
                 .map_err(|_| "could not encode population roster evidence".to_string())?;
             let roster_sha256 = write_evidence("population.json", &roster_bytes)?;
-            let display_name = audit_display_name(&request.config, &window.start, &window.until);
+            let display_name = audit_display_name(&config, &window.start, &window.until);
             let run = graph_population::fetch_audit(
                 &mut transport,
                 &config,
