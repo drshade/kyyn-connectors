@@ -1,4 +1,4 @@
-package kyyn:source@1.1.0;
+package kyyn:source@1.0.0;
 
 /// Ambient-authority-free utilities every connector may use.
 interface control {
