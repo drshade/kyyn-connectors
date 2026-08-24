@@ -39,7 +39,9 @@ explicit:
   executable artifacts consumers pin. `components/configurators/` contains the
   equally digest-pinned setup guests.
 - `crates/` contains reusable, execution-neutral connector logic consumed by
-  component guests; the repository has no native source executable.
+  component guests. `graph-population-fixture` is a native test-only corpus of
+  synthetic ADR 0037 provider conversations shared by the population source
+  tests; it is not shipped authority or a native source executable.
 
 `scripts/check-components.sh` reproducibly rebuilds every guest and compares
 its bytes with the committed artifact. Use `--update` only for a deliberate,
