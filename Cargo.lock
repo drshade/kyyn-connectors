@@ -321,6 +321,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "kyyn-component-graph-audit-meetings"
+version = "0.1.0"
+dependencies = [
+ "graph-population",
+ "kyyn-source-bundle",
+ "serde_json",
+ "sha2",
+ "wit-bindgen",
+]
+
+[[package]]
 name = "kyyn-component-graph-calendar"
 version = "0.1.0"
 dependencies = [

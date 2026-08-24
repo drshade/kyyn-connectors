@@ -93,6 +93,16 @@ evidence diagnostics; they are never presented as proof that no meeting
 occurred. Selected populations require the corresponding Teams application
 access policy in addition to the tenant-wide directory read grant.
 
+`graph-audit-meetings` is a third workload-only consumer because Microsoft 365
+audit searches have an asynchronous lifecycle. It resolves the same governed
+population, creates or exactly rediscovers one deterministic time-bounded Teams
+audit query, and returns `Pending` with a durable checkpoint until the provider
+reaches a terminal state. Successful records are downloaded page by page;
+provider terminal failure or expiry remains a complete run diagnostic rather
+than an empty-success claim. Selected scopes are sent as exact user-principal
+filters, while the required `AuditLogsQuery.Read.All` and directory application
+permissions remain honestly tenant-wide provider authority.
+
 The original mail, calendar, chats, and meetings connectors retain
 delegated-only `/me` semantics. `microsoft-files` and
 `microsoft-file-replace` remain dual-principal. The Entra administrator must
