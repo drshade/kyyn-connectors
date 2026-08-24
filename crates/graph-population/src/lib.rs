@@ -89,6 +89,17 @@ impl PopulationConfig {
             }
         }
     }
+
+    pub fn canonical_identity(&self) -> String {
+        match &self.scope {
+            MemberScope::AllMembers => "AllMembers".into(),
+            MemberScope::SelectedMembers { users } => {
+                let mut users = users.clone();
+                users.sort();
+                format!("SelectedMembers\0{}", users.join("\0"))
+            }
+        }
+    }
 }
 
 fn validate_upn(value: &str) -> Result<(), String> {
@@ -227,6 +238,38 @@ pub struct ArtifactDiagnostic {
     pub provider_code: Option<String>,
 }
 
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AuditRun {
+    pub completion: AuditCompletion,
+    pub query: Value,
+    pub records: Vec<AuditRecord>,
+    pub diagnostic: Option<AuditDiagnostic>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum AuditCompletion {
+    Pending {
+        checkpoint: String,
+        retry_after_seconds: Option<u32>,
+    },
+    Complete,
+}
+
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AuditRecord {
+    pub id: String,
+    pub record: Value,
+}
+
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AuditDiagnostic {
+    pub outcome: String,
+}
+
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct GraphUser {
@@ -243,6 +286,37 @@ struct Collection<T> {
     value: Vec<T>,
     #[serde(rename = "@odata.nextLink")]
     next_link: Option<String>,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct AuditQuery {
+    id: String,
+    #[serde(default)]
+    display_name: Option<String>,
+    status: String,
+    #[serde(default)]
+    filter_start_date_time: Option<String>,
+    #[serde(default)]
+    filter_end_date_time: Option<String>,
+    #[serde(default)]
+    record_type_filters: Vec<String>,
+    #[serde(default)]
+    operation_filters: Vec<String>,
+    #[serde(default)]
+    user_principal_name_filters: Vec<String>,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct AuditQueryRequest<'a> {
+    display_name: &'a str,
+    filter_start_date_time: &'a str,
+    filter_end_date_time: &'a str,
+    record_type_filters: [&'static str; 1],
+    operation_filters: [&'static str; 2],
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    user_principal_name_filters: Vec<String>,
 }
 
 #[derive(Clone, Copy)]
@@ -592,6 +666,216 @@ fn unavailable(artifact: &str, provider_code: Option<String>) -> ArtifactDiagnos
     }
 }
 
+pub fn resolve_population<T: Transport>(
+    transport: &mut T,
+    config: &PopulationConfig,
+) -> Result<Vec<RosterMember>, String> {
+    config.validate()?;
+    resolve_roster(transport, &config.scope)
+}
+
+pub fn fetch_audit<T: Transport>(
+    transport: &mut T,
+    config: &PopulationConfig,
+    start: &str,
+    until: &str,
+    display_name: &str,
+    checkpoint: Option<&str>,
+) -> Result<AuditRun, String> {
+    config.validate()?;
+    validate_audit_display_name(display_name)?;
+    let mut selected_users = match &config.scope {
+        MemberScope::AllMembers => Vec::new(),
+        MemberScope::SelectedMembers { users } => users.clone(),
+    };
+    selected_users.sort();
+    let query = if let Some(checkpoint) = checkpoint {
+        let query_id = parse_audit_checkpoint(checkpoint)?;
+        get_audit_query(transport, query_id)?
+    } else {
+        let values = get_collection(
+            transport,
+            "/v1.0/security/auditLog/queries",
+            "Graph audit-query paging",
+            MissingOutcome::NotFound,
+        )
+        .map_err(ObservationError::into_failure)?;
+        let mut exact = values
+            .into_iter()
+            .map(|value| {
+                serde_json::from_value::<AuditQuery>(value)
+                    .map_err(|_| "Graph returned an invalid audit query".to_string())
+            })
+            .collect::<Result<Vec<_>, _>>()?
+            .into_iter()
+            .filter(|query| {
+                audit_query_matches(query, display_name, start, until, selected_users.as_slice())
+            })
+            .collect::<Vec<_>>();
+        if exact.len() > 1 {
+            return Err("Graph returned multiple indistinguishable audit queries".into());
+        }
+        if let Some(query) = exact.pop() {
+            get_audit_query(transport, &query.id)?
+        } else {
+            create_audit_query(transport, display_name, start, until, selected_users)?
+        }
+    };
+    finish_audit_query(transport, query)
+}
+
+fn validate_audit_display_name(value: &str) -> Result<(), String> {
+    if value.is_empty()
+        || value.len() > 128
+        || !value.is_ascii()
+        || value
+            .bytes()
+            .any(|byte| !(byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_')))
+    {
+        return Err("audit query display identity is invalid".into());
+    }
+    Ok(())
+}
+
+fn parse_audit_checkpoint(checkpoint: &str) -> Result<&str, String> {
+    let query_id = checkpoint
+        .strip_prefix("audit:v1:")
+        .filter(|id| {
+            !id.is_empty()
+                && id.len() <= 256
+                && id
+                    .bytes()
+                    .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_' | b'.'))
+        })
+        .ok_or_else(|| "audit checkpoint is invalid".to_string())?;
+    Ok(query_id)
+}
+
+fn audit_query_matches(
+    query: &AuditQuery,
+    display_name: &str,
+    start: &str,
+    until: &str,
+    selected_users: &[String],
+) -> bool {
+    query.display_name.as_deref() == Some(display_name)
+        && query.filter_start_date_time.as_deref() == Some(start)
+        && query.filter_end_date_time.as_deref() == Some(until)
+        && query.record_type_filters == ["microsoftTeams"]
+        && query.operation_filters == ["MeetingDetail", "MeetingParticipantDetail"]
+        && query.user_principal_name_filters == selected_users
+}
+
+fn get_audit_query<T: Transport>(transport: &mut T, query_id: &str) -> Result<AuditQuery, String> {
+    let path = format!(
+        "/v1.0/security/auditLog/queries/{}",
+        encode_segment(query_id)
+    );
+    get_json(transport, &path, MissingOutcome::NotFound).map_err(ObservationError::into_failure)
+}
+
+fn create_audit_query<T: Transport>(
+    transport: &mut T,
+    display_name: &str,
+    start: &str,
+    until: &str,
+    selected_users: Vec<String>,
+) -> Result<AuditQuery, String> {
+    let body = serde_json::to_vec(&AuditQueryRequest {
+        display_name,
+        filter_start_date_time: start,
+        filter_end_date_time: until,
+        record_type_filters: ["microsoftTeams"],
+        operation_filters: ["MeetingDetail", "MeetingParticipantDetail"],
+        user_principal_name_filters: selected_users,
+    })
+    .map_err(|_| "could not encode the audit query".to_string())?;
+    // Do not retry a remote query creation: a lost response may still have
+    // created it, and the next invocation must rediscover the exact query.
+    let response = transport.send(&Request {
+        method: Method::Post,
+        path: "/v1.0/security/auditLog/queries".into(),
+        headers: BTreeMap::from([
+            ("accept".into(), "application/json".into()),
+            ("content-type".into(), "application/json".into()),
+        ]),
+        body: Some(body),
+    })?;
+    if response.status != 201 {
+        return Err(format!(
+            "Graph audit query creation failed (HTTP {})",
+            response.status
+        ));
+    }
+    serde_json::from_slice(&response.body)
+        .map_err(|_| "Graph returned an invalid created audit query".into())
+}
+
+fn finish_audit_query<T: Transport>(
+    transport: &mut T,
+    query: AuditQuery,
+) -> Result<AuditRun, String> {
+    let query_value = serde_json::to_value(&query)
+        .map_err(|_| "could not encode audit query evidence".to_string())?;
+    match query.status.as_str() {
+        "notStarted" | "running" => Ok(AuditRun {
+            completion: AuditCompletion::Pending {
+                checkpoint: format!("audit:v1:{}", query.id),
+                retry_after_seconds: Some(120),
+            },
+            query: query_value,
+            records: Vec::new(),
+            diagnostic: None,
+        }),
+        "succeeded" => {
+            let path = format!(
+                "/v1.0/security/auditLog/queries/{}/records?$top=500",
+                encode_segment(&query.id)
+            );
+            let values = get_collection(
+                transport,
+                &path,
+                "Graph audit-record paging",
+                MissingOutcome::NotFound,
+            )
+            .map_err(ObservationError::into_failure)?;
+            let mut records = values
+                .into_iter()
+                .map(|record| {
+                    let id = record
+                        .get("id")
+                        .and_then(Value::as_str)
+                        .filter(|id| !id.is_empty())
+                        .ok_or_else(|| "Graph audit record has no identity".to_string())?;
+                    Ok(AuditRecord {
+                        id: id.into(),
+                        record,
+                    })
+                })
+                .collect::<Result<Vec<_>, String>>()?;
+            records.sort_by(|left, right| left.id.cmp(&right.id));
+            if records.windows(2).any(|pair| pair[0].id == pair[1].id) {
+                return Err("Graph audit result contains duplicate record identities".into());
+            }
+            Ok(AuditRun {
+                completion: AuditCompletion::Complete,
+                query: query_value,
+                records,
+                diagnostic: None,
+            })
+        }
+        "failed" | "cancelled" | "timedOut" | "expired" => Ok(AuditRun {
+            completion: AuditCompletion::Complete,
+            query: query_value,
+            records: Vec::new(),
+            diagnostic: Some(AuditDiagnostic {
+                outcome: format!("query-{}", query.status),
+            }),
+        }),
+        _ => Err("Graph audit query returned an unknown status".into()),
+    }
+}
+
 fn resolve_roster<T: Transport>(
     transport: &mut T,
     scope: &MemberScope,
@@ -892,8 +1176,12 @@ mod tests {
     impl FixtureTransport {
         fn new(scenario: Scenario) -> Self {
             assert_eq!(scenario.invocations.len(), 1);
+            Self::invocation(&scenario.invocations[0])
+        }
+
+        fn invocation(invocation: &graph_population_fixture::Invocation) -> Self {
             Self {
-                exchanges: scenario.invocations[0].exchanges.clone().into(),
+                exchanges: invocation.exchanges.clone().into(),
                 current_responses: Default::default(),
                 sleeps: Vec::new(),
             }
@@ -908,11 +1196,24 @@ mod tests {
         fn send(&mut self, request: &Request) -> Result<Response, String> {
             if self.current_responses.is_empty() {
                 let exchange = self.exchanges.pop_front().expect("unexpected request");
-                assert_eq!(exchange.request.method, FixtureMethod::Get);
+                assert_eq!(
+                    exchange.request.method,
+                    match request.method {
+                        Method::Get => FixtureMethod::Get,
+                        Method::Post => FixtureMethod::Post,
+                    }
+                );
                 assert_eq!(exchange.request.path, request.path);
                 for (name, value) in &exchange.request.headers {
                     assert_eq!(request.headers.get(name), Some(value));
                 }
+                assert_eq!(
+                    exchange.request.body,
+                    request
+                        .body
+                        .as_ref()
+                        .map(|body| serde_json::from_slice(body).expect("JSON request body"))
+                );
                 self.current_responses = exchange.responses.into();
             }
             let response = self
@@ -1051,6 +1352,199 @@ mod tests {
                 .iter()
                 .all(|meeting| meeting.member_id == "user-alpha")
         );
+    }
+
+    fn all_members() -> PopulationConfig {
+        PopulationConfig {
+            scope: MemberScope::AllMembers,
+        }
+    }
+
+    #[test]
+    fn audit_creation_returns_a_durable_pending_checkpoint() {
+        let fixture = graph_population_fixture::scenario("audit-create-pending");
+        let expected = fixture.expected.clone();
+        let mut transport = FixtureTransport::new(fixture);
+        let run = fetch_audit(
+            &mut transport,
+            &all_members(),
+            "2026-08-01T00:00:00Z",
+            "2026-08-02T00:00:00Z",
+            "kyyn-source-audit-window-001",
+            None,
+        )
+        .unwrap();
+        assert!(transport.exhausted());
+        assert_eq!(run.records.len(), expected.item_count);
+        assert_eq!(
+            run.completion,
+            AuditCompletion::Pending {
+                checkpoint: expected.checkpoint.unwrap(),
+                retry_after_seconds: Some(120),
+            }
+        );
+    }
+
+    #[test]
+    fn selected_audit_scope_is_an_exact_provider_query_filter() {
+        use graph_population_fixture::{Exchange, Invocation, Request as FixtureRequest, Response};
+        use serde_json::json;
+
+        let invocation = Invocation {
+            checkpoint: None,
+            interrupt_after_exchange: None,
+            exchanges: vec![
+                Exchange {
+                    request: FixtureRequest {
+                        method: FixtureMethod::Get,
+                        path: "/v1.0/security/auditLog/queries".into(),
+                        headers: BTreeMap::new(),
+                        body: None,
+                    },
+                    responses: vec![Response {
+                        status: 200,
+                        headers: BTreeMap::new(),
+                        body: json!({ "value": [] }),
+                    }],
+                },
+                Exchange {
+                    request: FixtureRequest {
+                        method: FixtureMethod::Post,
+                        path: "/v1.0/security/auditLog/queries".into(),
+                        headers: BTreeMap::new(),
+                        body: Some(json!({
+                            "displayName": "kyyn-source-audit-window-001",
+                            "filterStartDateTime": "2026-08-01T00:00:00Z",
+                            "filterEndDateTime": "2026-08-02T00:00:00Z",
+                            "recordTypeFilters": ["microsoftTeams"],
+                            "operationFilters": ["MeetingDetail", "MeetingParticipantDetail"],
+                            "userPrincipalNameFilters": [
+                                "alpha@example.test",
+                                "beta@example.test"
+                            ]
+                        })),
+                    },
+                    responses: vec![Response {
+                        status: 201,
+                        headers: BTreeMap::new(),
+                        body: json!({
+                            "id": "query-selected",
+                            "displayName": "kyyn-source-audit-window-001",
+                            "status": "notStarted",
+                            "filterStartDateTime": "2026-08-01T00:00:00Z",
+                            "filterEndDateTime": "2026-08-02T00:00:00Z",
+                            "recordTypeFilters": ["microsoftTeams"],
+                            "operationFilters": ["MeetingDetail", "MeetingParticipantDetail"],
+                            "userPrincipalNameFilters": [
+                                "alpha@example.test",
+                                "beta@example.test"
+                            ]
+                        }),
+                    }],
+                },
+            ],
+        };
+        let mut transport = FixtureTransport::invocation(&invocation);
+        let run = fetch_audit(
+            &mut transport,
+            &PopulationConfig {
+                scope: MemberScope::SelectedMembers {
+                    users: vec!["beta@example.test".into(), "alpha@example.test".into()],
+                },
+            },
+            "2026-08-01T00:00:00Z",
+            "2026-08-02T00:00:00Z",
+            "kyyn-source-audit-window-001",
+            None,
+        )
+        .unwrap();
+        assert!(transport.exhausted());
+        assert!(matches!(run.completion, AuditCompletion::Pending { .. }));
+        assert_eq!(
+            PopulationConfig {
+                scope: MemberScope::SelectedMembers {
+                    users: vec!["alpha@example.test".into(), "beta@example.test".into()],
+                },
+            }
+            .canonical_identity(),
+            PopulationConfig {
+                scope: MemberScope::SelectedMembers {
+                    users: vec!["beta@example.test".into(), "alpha@example.test".into()],
+                },
+            }
+            .canonical_identity()
+        );
+    }
+
+    #[test]
+    fn audit_rediscovery_is_exact_and_ambiguous_matches_refuse() {
+        let fixture = graph_population_fixture::scenario("audit-crash-after-create-rediscover");
+        let mut transport = FixtureTransport::invocation(&fixture.invocations[1]);
+        let run = fetch_audit(
+            &mut transport,
+            &all_members(),
+            "2026-08-01T00:00:00Z",
+            "2026-08-02T00:00:00Z",
+            "kyyn-source-audit-window-001",
+            None,
+        )
+        .unwrap();
+        assert!(transport.exhausted());
+        assert!(matches!(run.completion, AuditCompletion::Pending { .. }));
+
+        let fixture = graph_population_fixture::scenario("audit-ambiguous-query-refusal");
+        let mut transport = FixtureTransport::new(fixture);
+        let error = fetch_audit(
+            &mut transport,
+            &all_members(),
+            "2026-08-01T00:00:00Z",
+            "2026-08-02T00:00:00Z",
+            "kyyn-source-audit-window-001",
+            None,
+        )
+        .unwrap_err();
+        assert_eq!(
+            error,
+            "Graph returned multiple indistinguishable audit queries"
+        );
+        assert!(transport.exhausted());
+    }
+
+    #[test]
+    fn audit_checkpoint_downloads_all_pages_and_terminal_failure_is_complete() {
+        let fixture = graph_population_fixture::scenario("audit-checkpoint-complete-paged");
+        let expected = fixture.expected.clone();
+        let checkpoint = fixture.invocations[0].checkpoint.clone().unwrap();
+        let mut transport = FixtureTransport::new(fixture);
+        let run = fetch_audit(
+            &mut transport,
+            &all_members(),
+            "2026-08-01T00:00:00Z",
+            "2026-08-02T00:00:00Z",
+            "kyyn-source-audit-window-001",
+            Some(&checkpoint),
+        )
+        .unwrap();
+        assert!(transport.exhausted());
+        assert_eq!(run.completion, AuditCompletion::Complete);
+        assert_eq!(run.records.len(), expected.item_count);
+
+        let fixture = graph_population_fixture::scenario("audit-terminal-failure-complete");
+        let checkpoint = fixture.invocations[0].checkpoint.clone().unwrap();
+        let mut transport = FixtureTransport::new(fixture);
+        let run = fetch_audit(
+            &mut transport,
+            &all_members(),
+            "2026-08-01T00:00:00Z",
+            "2026-08-02T00:00:00Z",
+            "kyyn-source-audit-window-001",
+            Some(&checkpoint),
+        )
+        .unwrap();
+        assert!(transport.exhausted());
+        assert_eq!(run.completion, AuditCompletion::Complete);
+        assert!(run.records.is_empty());
+        assert_eq!(run.diagnostic.unwrap().outcome, "query-failed");
     }
 
     #[test]

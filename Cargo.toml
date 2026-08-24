@@ -27,6 +27,7 @@ members = [
     "connectors/sources/graph-chats",
     "connectors/sources/graph-mail",
     "connectors/sources/graph-meetings",
+    "connectors/sources/graph-audit-meetings",
     "connectors/sources/graph-org-calendar",
     "connectors/sources/graph-org-meetings",
     "connectors/sources/git-repo",

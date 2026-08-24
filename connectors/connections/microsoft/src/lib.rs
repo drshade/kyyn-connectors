@@ -47,6 +47,7 @@ fn ensure_workload_response(status: u16) -> Result<(), String> {
 #[cfg(any(test, all(target_arch = "wasm32", target_os = "unknown")))]
 fn normalized_capabilities(capabilities: &[String]) -> Result<Vec<String>, String> {
     const KNOWN: &[&str] = &[
+        "audit-read",
         "calendar-read",
         "chats-read",
         "directory-users-read",
@@ -75,6 +76,9 @@ fn scopes(capabilities: &[String]) -> Result<String, String> {
     let mut scopes = BTreeSet::from(["offline_access", "User.Read"]);
     for capability in capabilities {
         match capability.as_str() {
+            "audit-read" => {
+                scopes.insert("AuditLogsQuery.Read.All");
+            }
             "mail-read" => {
                 scopes.insert("Mail.Read");
             }
@@ -481,6 +485,10 @@ mod tests {
         assert_eq!(
             scopes(&["directory-users-read".into()]).unwrap(),
             "User.Read User.Read.All offline_access"
+        );
+        assert_eq!(
+            scopes(&["audit-read".into()]).unwrap(),
+            "AuditLogsQuery.Read.All User.Read offline_access"
         );
     }
 
