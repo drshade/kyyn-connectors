@@ -165,7 +165,7 @@
             (purpose: Observe, authorization: Connection, authority: "https://graph.microsoft.com", method: Get, path: "/v1.0/security/auditLog/queries/{segment}/records"),
          ]),
          component: "components/sources/graph-audit-meetings.wasm",
-         component_sha256: "f7123b0e755783a1f8b56c3662c988f06bbffc55199a229069463a0aaaedd62d",
+         component_sha256: "4e6af992c3df9af4714a6bbd7269a7d3f3cc4c9be9fb565b240494882686fe08",
          config: [
             (name: "scope_mode", label: Some("Population"), doc: "Choose every enabled organization member or an explicit selected set.", required: true, example: Some("all-members"), custody: Ephemeral, control: Choice(options: ["all-members", "selected-members"])),
             (name: "selected_users", label: Some("Selected user principal names"), doc: "Lowercase user principal names; required only for Selected members.", ty: StrList, example: Some("member@example.org"), custody: Ephemeral),
@@ -174,7 +174,7 @@
          configurator: (
             world: "kyyn:configurator@1",
             component: "components/configurators/graph-population.wasm",
-            component_sha256: "824cd5a4fbe2fc3541a033c7678a0bb967d2486e00b02a00f855cc84c7d555b5",
+            component_sha256: "cd7edd8a4e75d9e8f71721487a7177ec9b7741f050cc243f9be46bde328ffc35",
             requests: [],
             produces: ["scope"],
             max_input_bytes: 1048576,
@@ -189,7 +189,7 @@
             (purpose: Observe, authorization: Connection, authority: "https://graph.microsoft.com", method: Get, path: "/v1.0/users/{segment}/calendarView"),
          ]),
          component: "components/sources/graph-org-calendar.wasm",
-         component_sha256: "6ae811a533e971c71197fc7bd5eb07328a7862166cc6cce68457100ec04071d4",
+         component_sha256: "69be0f1ed4be628a1392fc009457deeb04ba9d1b1708b5ff048d84267b50bfbf",
          config: [
             (name: "scope_mode", label: Some("Population"), doc: "Choose every enabled organization member or an explicit selected set.", required: true, example: Some("all-members"), custody: Ephemeral, control: Choice(options: ["all-members", "selected-members"])),
             (name: "selected_users", label: Some("Selected user principal names"), doc: "Lowercase user principal names; required only for Selected members.", ty: StrList, example: Some("member@example.org"), custody: Ephemeral),
@@ -198,7 +198,7 @@
          configurator: (
             world: "kyyn:configurator@1",
             component: "components/configurators/graph-population.wasm",
-            component_sha256: "824cd5a4fbe2fc3541a033c7678a0bb967d2486e00b02a00f855cc84c7d555b5",
+            component_sha256: "cd7edd8a4e75d9e8f71721487a7177ec9b7741f050cc243f9be46bde328ffc35",
             requests: [],
             produces: ["scope"],
             max_input_bytes: 1048576,
@@ -218,7 +218,7 @@
             (purpose: Observe, authorization: Connection, authority: "https://graph.microsoft.com", method: Get, path: "/v1.0/users/{segment}/onlineMeetings/{segment}/attendanceReports/{segment}/attendanceRecords"),
          ]),
          component: "components/sources/graph-org-meetings.wasm",
-         component_sha256: "81dda21b4521b3951b6a2124e1a263bebed1019a02291a8c7b8e6650b817b71e",
+         component_sha256: "5fa48736c0aa39c30ebadcd11516ea243bf1ebea91e77ed4e504bae4d844c138",
          config: [
             (name: "scope_mode", label: Some("Population"), doc: "Choose every enabled organization member or an explicit selected set.", required: true, example: Some("all-members"), custody: Ephemeral, control: Choice(options: ["all-members", "selected-members"])),
             (name: "selected_users", label: Some("Selected user principal names"), doc: "Lowercase user principal names; required only for Selected members.", ty: StrList, example: Some("member@example.org"), custody: Ephemeral),
@@ -227,7 +227,7 @@
          configurator: (
             world: "kyyn:configurator@1",
             component: "components/configurators/graph-population.wasm",
-            component_sha256: "824cd5a4fbe2fc3541a033c7678a0bb967d2486e00b02a00f855cc84c7d555b5",
+            component_sha256: "cd7edd8a4e75d9e8f71721487a7177ec9b7741f050cc243f9be46bde328ffc35",
             requests: [],
             produces: ["scope"],
             max_input_bytes: 1048576,

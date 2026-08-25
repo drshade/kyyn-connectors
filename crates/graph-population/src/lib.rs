@@ -19,6 +19,7 @@ pub struct PopulationConfig {
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(tag = "kind", rename_all = "kebab-case", deny_unknown_fields)]
 pub enum MemberScope {
     AllMembers,
     SelectedMembers { users: Vec<String> },
@@ -34,10 +35,61 @@ pub struct SetupInput {
 
 impl PopulationConfig {
     pub fn parse(text: &str) -> Result<Self, String> {
-        let config: Self = ron::from_str(text).map_err(|_| {
+        let invalid = || {
             "population config must contain exactly one AllMembers or SelectedMembers scope"
                 .to_string()
-        })?;
+        };
+        let config: Self = match ron::from_str(text) {
+            Ok(config) => config,
+            Err(_) => {
+                // Kyyn stores accepted connector configuration as `ron::Value`.
+                // RON then renders the map with braces, which is the same
+                // provider-neutral data but not Rust struct syntax. Decode the
+                // closed tagged sum from that exact map without accepting any
+                // additional states.
+                let value: ron::Value = ron::from_str(text).map_err(|_| invalid())?;
+                let ron::Value::Map(config) = value else {
+                    return Err(invalid());
+                };
+                if config.len() != 1 {
+                    return Err(invalid());
+                }
+                let scope = config
+                    .get(&ron::Value::String("scope".into()))
+                    .ok_or_else(&invalid)?;
+                let ron::Value::Map(scope) = scope else {
+                    return Err(invalid());
+                };
+                let kind = scope
+                    .get(&ron::Value::String("kind".into()))
+                    .and_then(|value| match value {
+                        ron::Value::String(value) => Some(value.as_str()),
+                        _ => None,
+                    })
+                    .ok_or_else(&invalid)?;
+                let scope = match kind {
+                    "all-members" if scope.len() == 1 => MemberScope::AllMembers,
+                    "selected-members" if scope.len() == 2 => {
+                        let users = scope
+                            .get(&ron::Value::String("users".into()))
+                            .and_then(|value| match value {
+                                ron::Value::Seq(values) => values
+                                    .iter()
+                                    .map(|value| match value {
+                                        ron::Value::String(value) => Some(value.clone()),
+                                        _ => None,
+                                    })
+                                    .collect::<Option<Vec<_>>>(),
+                                _ => None,
+                            })
+                            .ok_or_else(&invalid)?;
+                        MemberScope::SelectedMembers { users }
+                    }
+                    _ => return Err(invalid()),
+                };
+                Self { scope }
+            }
+        };
         config.validate()?;
         Ok(config)
     }
@@ -1600,5 +1652,24 @@ mod tests {
             })
             .is_err()
         );
+    }
+
+    #[test]
+    fn durable_scope_survives_the_engine_value_boundary() {
+        for config in [
+            PopulationConfig {
+                scope: MemberScope::AllMembers,
+            },
+            PopulationConfig {
+                scope: MemberScope::SelectedMembers {
+                    users: vec!["member@example.test".into()],
+                },
+            },
+        ] {
+            let guest_output = ron::to_string(&config).unwrap();
+            let engine_value: ron::Value = ron::from_str(&guest_output).unwrap();
+            let source_input = ron::to_string(&engine_value).unwrap();
+            assert_eq!(PopulationConfig::parse(&source_input).unwrap(), config);
+        }
     }
 }
