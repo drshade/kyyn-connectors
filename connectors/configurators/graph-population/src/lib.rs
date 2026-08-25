@@ -67,9 +67,15 @@ mod tests {
             }
         );
         let durable = ron::to_string(&config).unwrap();
-        assert!(durable.contains("scope:SelectedMembers"));
+        assert!(durable.contains("kind:\"selected-members\""));
+        assert!(durable.contains("users:[\"alpha@example.test\"]"));
         assert!(!durable.contains("scope_mode"));
         assert_eq!(PopulationConfig::parse(&durable).unwrap(), config);
+        let engine_value: ron::Value = ron::from_str(&durable).unwrap();
+        assert_eq!(
+            PopulationConfig::parse(&ron::to_string(&engine_value).unwrap()).unwrap(),
+            config
+        );
     }
 
     #[test]
