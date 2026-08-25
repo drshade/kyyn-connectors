@@ -261,6 +261,7 @@ mod contract {
         #[default]
         Durable,
         Ephemeral,
+        Promotable,
         Secret,
     }
 
@@ -653,7 +654,9 @@ mod contract {
                 assert!(source.config.iter().any(|field| {
                     matches!(
                         field.custody,
-                        ConfigCustody::Ephemeral | ConfigCustody::Secret
+                        ConfigCustody::Ephemeral
+                            | ConfigCustody::Promotable
+                            | ConfigCustody::Secret
                     )
                 }));
                 let produced = configurator.produces.iter().collect::<HashSet<_>>();

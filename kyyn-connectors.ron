@@ -167,8 +167,8 @@
          component: "components/sources/graph-audit-meetings.wasm",
          component_sha256: "4e6af992c3df9af4714a6bbd7269a7d3f3cc4c9be9fb565b240494882686fe08",
          config: [
-            (name: "scope_mode", label: Some("Population"), doc: "Choose every enabled organization member or an explicit selected set.", required: true, example: Some("all-members"), custody: Ephemeral, control: Choice(options: ["all-members", "selected-members"])),
-            (name: "selected_users", label: Some("Selected user principal names"), doc: "Lowercase user principal names; required only for Selected members.", ty: StrList, example: Some("member@example.org"), custody: Ephemeral),
+            (name: "scope_mode", label: Some("Population"), doc: "Choose every enabled organization member or an explicit selected set.", required: true, example: Some("all-members"), custody: Promotable, control: Choice(options: ["all-members", "selected-members"])),
+            (name: "selected_users", label: Some("Selected user principal names"), doc: "Lowercase user principal names; required only for Selected members.", ty: StrList, example: Some("member@example.org"), custody: Promotable),
             (name: "scope", label: Some("Governed population scope"), doc: "Closed AllMembers or non-empty SelectedMembers scope emitted by setup.", ty: Ron, required: true, example: Some("AllMembers")),
          ],
          configurator: (
@@ -191,8 +191,8 @@
          component: "components/sources/graph-org-calendar.wasm",
          component_sha256: "69be0f1ed4be628a1392fc009457deeb04ba9d1b1708b5ff048d84267b50bfbf",
          config: [
-            (name: "scope_mode", label: Some("Population"), doc: "Choose every enabled organization member or an explicit selected set.", required: true, example: Some("all-members"), custody: Ephemeral, control: Choice(options: ["all-members", "selected-members"])),
-            (name: "selected_users", label: Some("Selected user principal names"), doc: "Lowercase user principal names; required only for Selected members.", ty: StrList, example: Some("member@example.org"), custody: Ephemeral),
+            (name: "scope_mode", label: Some("Population"), doc: "Choose every enabled organization member or an explicit selected set.", required: true, example: Some("all-members"), custody: Promotable, control: Choice(options: ["all-members", "selected-members"])),
+            (name: "selected_users", label: Some("Selected user principal names"), doc: "Lowercase user principal names; required only for Selected members.", ty: StrList, example: Some("member@example.org"), custody: Promotable),
             (name: "scope", label: Some("Governed population scope"), doc: "Closed AllMembers or non-empty SelectedMembers scope emitted by setup.", ty: Ron, required: true, example: Some("AllMembers")),
          ],
          configurator: (
@@ -220,8 +220,8 @@
          component: "components/sources/graph-org-meetings.wasm",
          component_sha256: "5fa48736c0aa39c30ebadcd11516ea243bf1ebea91e77ed4e504bae4d844c138",
          config: [
-            (name: "scope_mode", label: Some("Population"), doc: "Choose every enabled organization member or an explicit selected set.", required: true, example: Some("all-members"), custody: Ephemeral, control: Choice(options: ["all-members", "selected-members"])),
-            (name: "selected_users", label: Some("Selected user principal names"), doc: "Lowercase user principal names; required only for Selected members.", ty: StrList, example: Some("member@example.org"), custody: Ephemeral),
+            (name: "scope_mode", label: Some("Population"), doc: "Choose every enabled organization member or an explicit selected set.", required: true, example: Some("all-members"), custody: Promotable, control: Choice(options: ["all-members", "selected-members"])),
+            (name: "selected_users", label: Some("Selected user principal names"), doc: "Lowercase user principal names; required only for Selected members.", ty: StrList, example: Some("member@example.org"), custody: Promotable),
             (name: "scope", label: Some("Governed population scope"), doc: "Closed AllMembers or non-empty SelectedMembers scope emitted by setup.", ty: Ron, required: true, example: Some("AllMembers")),
          ],
          configurator: (
