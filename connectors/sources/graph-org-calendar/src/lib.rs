@@ -126,7 +126,8 @@ mod guest {
                         content_hash: kyyn_source_bundle::canonical_record_sha256(event)
                             .map_err(|error| error.to_string())?,
                         files: vec!["population.json".into(), "events.json".into()],
-                        file_hashes: Vec::new(),
+                        primary: "events.json".into(),
+                        file_hashes: vec![("population.json".into(), roster_sha256.clone())],
                         locator: Some(event.id.clone()),
                         meta: format!("calendar event for {}", event.member_user_principal_name),
                     })
@@ -149,6 +150,7 @@ mod guest {
             ));
             Ok(FetchResult {
                 completion: FetchCompletion::Complete,
+                attempt_context_sha256: Some(roster_sha256.clone()),
                 items,
                 notes: format!(
                     "{} members; {unavailable} without an available mailbox; population sha256 {roster_sha256}",

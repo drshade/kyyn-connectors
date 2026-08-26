@@ -141,6 +141,7 @@ mod guest {
                     version: None,
                     content_hash: stored.sha256,
                     files: vec![entry.path.clone()],
+                    primary: entry.path.clone(),
                     file_hashes: Vec::new(),
                     locator: None,
                     meta: format!(
@@ -154,6 +155,7 @@ mod guest {
             control::progress(&format!("swept {} file(s)", items.len()));
             Ok(FetchResult {
                 completion: FetchCompletion::Complete,
+                attempt_context_sha256: None,
                 items,
                 notes: notes.join("; "),
                 next_checkpoint: None,

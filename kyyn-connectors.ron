@@ -70,7 +70,7 @@
         (name: "sweep", summary: "Glob a local directory tree into hashed, versioned evidence.",
          world: "kyyn:source@1", namespace: "file",
          component: "components/sources/sweep.wasm",
-         component_sha256: "4e1616d4ce2ae68d53e0a14fbf700ac23c1fa5b4721a31645c76f4e5ceadd5fe",
+         component_sha256: "251e6154f95130312f2405a19ed2dc6105b828ebb9584914d9907408434ebe4e",
          config: [
             (name: "root", doc: "The directory tree to sweep (~ expands).", ty: Path, required: true, example: Some("~/notes")),
             (name: "patterns", doc: "Globs relative to root; * stays within one level, ** crosses.", ty: StrList, example: Some("**/*.md"), default: Some("**/*")),
@@ -80,7 +80,7 @@
         (name: "git-repo", summary: "Any git repository's tree (local or remote) at a ref, swept as versioned evidence.",
          world: "kyyn:source@1", namespace: "repo", capabilities: (repo: true),
          component: "components/sources/git-repo.wasm",
-         component_sha256: "0cdef98953902bcb754da1f7c3153144e8f0196a89765de27685005e90daee9d",
+         component_sha256: "b747da4db6293d804d92dd700eeacdb01bb8b0b93acb6c1d43454389d00a9fc9",
          config: [
             (name: "url", doc: "Git URL or local path of the repository.", required: true, example: Some("https://github.com/org/repo")),
             (name: "git_ref", doc: "Branch or tag to read; HEAD = the default branch.", default: Some("HEAD")),
@@ -91,7 +91,7 @@
         (name: "pack", summary: "A KB template at a pinned rev, imported as evidence for agent-curated adoption.",
          world: "kyyn:source@1", namespace: "pack", capabilities: (repo: true),
          component: "components/sources/pack.wasm",
-         component_sha256: "69a4d20d49fbff392d0146dc707dab1b52d17252611969895dd8cf477867c15b",
+         component_sha256: "32c0a001317a9dd3a48c44772e16fb3b1bb1e98f4e612277e844d034b2cfde38",
          config: [
             (name: "template", doc: "The template directory to import (e.g. gbrain).", required: true, example: Some("gbrain")),
             (name: "rev", doc: "Full 40-hex commit OID of the templates repo — bump by proposal to take updates.", required: true, example: Some("90fd6c9f3288717e2de0572a8f33d653661b32cf")),
@@ -105,7 +105,7 @@
             (purpose: Observe, authorization: Connection, authority: "connection:instance_url", method: Get, path: "/services/data/{segment}/query/{segment}"),
          ]),
          component: "components/sources/salesforce.wasm",
-         component_sha256: "359f2fb6bf0f690c32c53974b4edfa9d5e203b8fccef22277ae1dde2213c9d51",
+         component_sha256: "ebd39a7f60cb68c4bdf32d783ab3d96447a2dc365c4f537c757f8f2de5da2ba8",
          config: [
             (name: "query", doc: "The SOQL query whose records this source ingests.", required: true, example: Some("SELECT Id, Name, StageName FROM Opportunity")),
             (name: "kind", doc: "The item kind records carry.", default: Some("sf-record")),
@@ -121,7 +121,7 @@
             (purpose: Observe, authorization: Connection, authority: "https://graph.microsoft.com", method: Get, path: "/v1.0/me/messages/{segment}/attachments/{segment}/$value"),
          ]),
          component: "components/sources/graph-mail.wasm",
-         component_sha256: "221dc62937e3d37802eaf32a344449a9ae6b53ac9bf14e73bd831b03798f367f",
+         component_sha256: "75f04194a1f5bc5aee04941dcbc198a4f4b79c9ab903403f98ff017019a57029",
          config: [
             (name: "mail_filter", doc: "OData $filter fragment ANDed onto the mail window.", example: Some("contains(subject, 'Sales Update')")),
             (name: "owner_addresses", doc: "Your own addresses (lowercased) — classifies sent vs received.", ty: StrList, example: Some("you@company.com")),
@@ -133,7 +133,7 @@
             (purpose: Observe, authorization: Connection, authority: "https://graph.microsoft.com", method: Get, path: "/v1.0/me/calendarView"),
          ]),
          component: "components/sources/graph-calendar.wasm",
-         component_sha256: "50f095a5addbf36673b9d7ec5be3d3c86117fb6573330838b182a3b29fb07b2d",
+         component_sha256: "a95909b98d03c5fbc87981a57d6a7135091aebc81e8c5fe16eb4d6c344ca5cf6",
          config: [
             (name: "owner_addresses", doc: "Your own addresses (lowercased).", ty: StrList, example: Some("you@company.com")),
          ]),
@@ -149,7 +149,7 @@
             (purpose: Observe, authorization: Connection, authority: "https://graph.microsoft.com", method: Get, path: "/v1.0/me/onlineMeetings/{segment}/attendanceReports/{segment}/attendanceRecords"),
          ]),
          component: "components/sources/graph-meetings.wasm",
-         component_sha256: "e209b83705e21a90e15a64ae1c03bb85d7dc5e12d46a4b378c8c0a54570565d4",
+         component_sha256: "c8c7b1f571b027a4152aa7725ce5e39bebd4c7cc7c05eb94b09826d47afe8ee3",
          config: [
             (name: "owner_addresses", doc: "Your own addresses (lowercased).", ty: StrList, example: Some("you@company.com")),
          ]),
@@ -165,7 +165,7 @@
             (purpose: Observe, authorization: Connection, authority: "https://graph.microsoft.com", method: Get, path: "/v1.0/security/auditLog/queries/{segment}/records"),
          ]),
          component: "components/sources/graph-audit-meetings.wasm",
-         component_sha256: "4e6af992c3df9af4714a6bbd7269a7d3f3cc4c9be9fb565b240494882686fe08",
+         component_sha256: "36ea041594451bdd736fcd035c3adffe740a288f505868245e6a8e7099219e5c",
          config: [
             (name: "scope_mode", label: Some("Population"), doc: "Choose every enabled organization member or an explicit selected set.", required: true, example: Some("all-members"), custody: Promotable, control: Choice(options: ["all-members", "selected-members"])),
             (name: "selected_users", label: Some("Selected user principal names"), doc: "Lowercase user principal names; required only for Selected members.", ty: StrList, example: Some("member@example.org"), custody: Promotable),
@@ -189,7 +189,7 @@
             (purpose: Observe, authorization: Connection, authority: "https://graph.microsoft.com", method: Get, path: "/v1.0/users/{segment}/calendarView"),
          ]),
          component: "components/sources/graph-org-calendar.wasm",
-         component_sha256: "69be0f1ed4be628a1392fc009457deeb04ba9d1b1708b5ff048d84267b50bfbf",
+         component_sha256: "79d2fadde33a5326afdfd86ffbcd06809fe22aed83b6677446aa6b6f0bfe3113",
          config: [
             (name: "scope_mode", label: Some("Population"), doc: "Choose every enabled organization member or an explicit selected set.", required: true, example: Some("all-members"), custody: Promotable, control: Choice(options: ["all-members", "selected-members"])),
             (name: "selected_users", label: Some("Selected user principal names"), doc: "Lowercase user principal names; required only for Selected members.", ty: StrList, example: Some("member@example.org"), custody: Promotable),
@@ -218,7 +218,7 @@
             (purpose: Observe, authorization: Connection, authority: "https://graph.microsoft.com", method: Get, path: "/v1.0/users/{segment}/onlineMeetings/{segment}/attendanceReports/{segment}/attendanceRecords"),
          ]),
          component: "components/sources/graph-org-meetings.wasm",
-         component_sha256: "5fa48736c0aa39c30ebadcd11516ea243bf1ebea91e77ed4e504bae4d844c138",
+         component_sha256: "8c5163fdbcc35218092603eb85f63b43c3f652072c2e45d405e2e97d5da423e4",
          config: [
             (name: "scope_mode", label: Some("Population"), doc: "Choose every enabled organization member or an explicit selected set.", required: true, example: Some("all-members"), custody: Promotable, control: Choice(options: ["all-members", "selected-members"])),
             (name: "selected_users", label: Some("Selected user principal names"), doc: "Lowercase user principal names; required only for Selected members.", ty: StrList, example: Some("member@example.org"), custody: Promotable),
@@ -241,7 +241,7 @@
             (purpose: Observe, authorization: Connection, authority: "https://graph.microsoft.com", method: Get, path: "/v1.0/chats/{segment}/messages"),
          ]),
          component: "components/sources/graph-chats.wasm",
-         component_sha256: "ec7408700f18e46d3ea6d3501bbf3d00fb810ffbcc6b835fca7801cab5c98e86",
+         component_sha256: "6550b0f3ec85d88efa63ef6c18cf97d5db622491c14773295ca7bcfffb234608",
          config: [
             (name: "owner_addresses", doc: "Your own addresses (lowercased).", ty: StrList, example: Some("you@company.com")),
          ]),
@@ -254,7 +254,7 @@
             (purpose: Observe, authorization: Connection, authority: "https://graph.microsoft.com", method: Get, path: "/v1.0/drives/{segment}/items/{segment}/content", continuation: ProviderDownload),
          ]),
          component: "components/sources/microsoft-files.wasm",
-         component_sha256: "863d1799f2f701ed1328ff4891b27a252437b73190577453ec04cc76fe4ad9f1",
+         component_sha256: "0d5c78fa6aeeb461c042e33e88bb69acca6eac1ef3f0b81baaa494de333795e0",
          config: [
             (name: "resource_link", label: Some("SharePoint or OneDrive link"), doc: "Paste a browser link to one file or folder. Kyyn resolves it once and does not store the link.", required: true, example: Some("https://tenant.sharepoint.com/sites/Team/Shared%20Documents/report.xlsx"), custody: Ephemeral, control: ResourceLink),
             (name: "drive_id", label: Some("Drive identity"), doc: "Canonical drive identity produced during link resolution.", required: true, example: Some("<resolved-drive-id>")),
