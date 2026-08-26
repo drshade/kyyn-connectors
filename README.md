@@ -75,33 +75,22 @@ tenant token endpoint using the OAuth client-credentials `.default` scope and
 returns only the short-lived bearer authorization to Kyyn; it writes no
 workload credential or token to durable Connection state.
 
-`graph-org-calendar` is workload-only and observes either every enabled
-organization member or one explicit non-empty set emitted by its zero-network
-population configurator. Its accepted scope governs what the component asks
-for; it does not claim to narrow the application credential's directory read.
-For selected populations, the administrator must establish the supported
-Exchange resource scope without a concurrent tenant-wide calendar role that
-would undo it. Directory user read remains tenant-wide and is disclosed as
-such.
+`graph-org-meetings` is the single workload-only population consumer. It
+observes either every enabled organization member or one explicit non-empty set
+emitted by its zero-network configurator. Each bounded invocation reads one
+calendar page, emits joined occurrence evidence, and checkpoints the next page
+or member; Kyyn activates the accumulated attempt only when the final batch is
+complete. The calendar request selects only the thirteen fields accepted by ADR
+0037, and duplicate invitation copies are assigned to one deterministic
+population observer by normalized `iCalUId` plus start instant.
 
-`graph-org-meetings` reuses that governed population but remains a separate
-workload-only consumer with its own reviewed authority. It discovers candidate
-online meetings from member-addressed calendars, resolves them under the same
-canonical member identity, and records available transcript content and
-attendance records. Missing, expired or policy-refused artifacts remain bounded
-evidence diagnostics; they are never presented as proof that no meeting
-occurred. Selected populations require the corresponding Teams application
-access policy in addition to the tenant-wide directory read grant.
-
-`graph-audit-meetings` is a third workload-only consumer because Microsoft 365
-audit searches have an asynchronous lifecycle. It resolves the same governed
-population, creates or exactly rediscovers one deterministic time-bounded Teams
-audit query, and returns `Pending` with a durable checkpoint until the provider
-reaches a terminal state. Successful records are downloaded page by page;
-provider terminal failure or expiry remains a complete run diagnostic rather
-than an empty-success claim. Selected scopes are sent as exact user-principal
-filters, while the required `AuditLogsQuery.Read.All` and directory application
-permissions remain honestly tenant-wide provider authority.
+Meeting metadata, transcripts and attendance are always addressed through the
+calendar organizer's canonical provider identity, never an attendee whose
+mailbox exposed the invitation. Transcript and attendance outcomes distinguish
+observed material (including a genuinely empty attendance result) from closed
+unavailable reasons such as external organizer, not produced, not retained and
+not permitted. Population setup governs what the component observes; it does
+not claim to narrow the application credential's tenant-wide directory read.
 
 The original mail, calendar, chats, and meetings connectors retain
 delegated-only `/me` semantics. `microsoft-files` and

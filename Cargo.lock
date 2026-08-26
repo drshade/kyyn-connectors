@@ -134,10 +134,12 @@ checksum = "0cc23270f6e1808e30a928bdc84dea0b9b4136a8bc82338574f23baf47bbd280"
 name = "graph-population"
 version = "0.1.0"
 dependencies = [
+ "chrono",
  "graph-population-fixture",
  "ron",
  "serde",
  "serde_json",
+ "sha2",
 ]
 
 [[package]]
@@ -321,17 +323,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "kyyn-component-graph-audit-meetings"
-version = "0.1.0"
-dependencies = [
- "graph-population",
- "kyyn-source-bundle",
- "serde_json",
- "sha2",
- "wit-bindgen",
-]
-
-[[package]]
 name = "kyyn-component-graph-calendar"
 version = "0.1.0"
 dependencies = [
@@ -392,22 +383,10 @@ dependencies = [
 ]
 
 [[package]]
-name = "kyyn-component-graph-org-calendar"
-version = "0.1.0"
-dependencies = [
- "graph-population",
- "kyyn-source-bundle",
- "ron",
- "serde_json",
- "wit-bindgen",
-]
-
-[[package]]
 name = "kyyn-component-graph-org-meetings"
 version = "0.1.0"
 dependencies = [
  "graph-population",
- "kyyn-source-bundle",
  "serde_json",
  "wit-bindgen",
 ]

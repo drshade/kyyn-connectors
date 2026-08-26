@@ -305,7 +305,7 @@ mod contract {
         assert_eq!(manifest.connector_manifest, 1);
         assert_eq!(manifest.connections.len(), 2, "two account providers");
         assert_eq!(manifest.sinks.len(), 3, "three first-party sinks");
-        assert_eq!(manifest.sources.len(), 12, "twelve first-party sources");
+        assert_eq!(manifest.sources.len(), 10, "ten first-party sources");
         let mut provider_names = HashSet::new();
         for connection in &manifest.connections {
             assert!(
@@ -590,14 +590,7 @@ mod contract {
             for grant in &source.capabilities.requests {
                 assert!(grant.path.starts_with('/'), "{} request path", source.name);
                 match grant.purpose {
-                    Purpose::Observe => {
-                        if matches!(grant.method, Method::Post) {
-                            assert_eq!(source.name, "graph-audit-meetings");
-                            assert_eq!(grant.path, "/v1.0/security/auditLog/queries");
-                        } else {
-                            assert!(matches!(grant.method, Method::Get));
-                        }
-                    }
+                    Purpose::Observe => assert!(matches!(grant.method, Method::Get)),
                     Purpose::Authenticate => assert!(matches!(grant.method, Method::Post)),
                     Purpose::Configure => panic!("source execution grants cannot configure"),
                 }
@@ -711,10 +704,7 @@ mod contract {
                         requirement.provider == "microsoft"
                             && !matches!(
                                 source.name.as_str(),
-                                "microsoft-files"
-                                    | "graph-org-calendar"
-                                    | "graph-org-meetings"
-                                    | "graph-audit-meetings"
+                                "microsoft-files" | "graph-org-meetings"
                             )
                     })
                 })
@@ -723,24 +713,6 @@ mod contract {
                         == [ConnectionPrincipalClass::DelegatedHuman]
                 )
         );
-        let graph_org_calendar = manifest
-            .sources
-            .iter()
-            .find(|source| source.name == "graph-org-calendar")
-            .expect("workload population calendar is advertised");
-        assert_eq!(
-            graph_org_calendar.connection.as_ref().unwrap().capabilities,
-            ["calendar-read", "directory-users-read"]
-        );
-        assert_eq!(
-            graph_org_calendar
-                .connection
-                .as_ref()
-                .unwrap()
-                .principal_classes,
-            [ConnectionPrincipalClass::WorkloadApplication]
-        );
-        assert!(graph_org_calendar.configurator.is_some());
         let graph_org_meetings = manifest
             .sources
             .iter()
@@ -759,38 +731,6 @@ mod contract {
             [ConnectionPrincipalClass::WorkloadApplication]
         );
         assert!(graph_org_meetings.configurator.is_some());
-        let graph_audit_meetings = manifest
-            .sources
-            .iter()
-            .find(|source| source.name == "graph-audit-meetings")
-            .expect("workload population audit is advertised");
-        assert_eq!(
-            graph_audit_meetings
-                .connection
-                .as_ref()
-                .unwrap()
-                .capabilities,
-            ["audit-read", "directory-users-read"]
-        );
-        assert_eq!(
-            graph_audit_meetings
-                .connection
-                .as_ref()
-                .unwrap()
-                .principal_classes,
-            [ConnectionPrincipalClass::WorkloadApplication]
-        );
-        assert!(graph_audit_meetings.configurator.is_some());
-        assert_eq!(
-            graph_audit_meetings
-                .capabilities
-                .requests
-                .iter()
-                .filter(|grant| matches!(grant.method, Method::Post))
-                .count(),
-            1,
-            "audit source has exactly one remote query-creation operation"
-        );
         let salesforce = manifest
             .sources
             .iter()

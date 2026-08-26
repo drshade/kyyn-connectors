@@ -11,14 +11,19 @@ mod guest {
 
     use bindings::exports::kyyn::source::api::{
         AuthChallenge, AuthPollResult, AuthStatus, ConnectorDescribe, FetchCompletion,
-        FetchRequest, FetchResult, FetchStyle, Guest, Item, RunSpec,
+        FetchRequest, FetchResult, FetchStyle, Guest, Item, Pending, RunSpec,
     };
     use bindings::kyyn::source::http::{self, Method as HostMethod, Purpose};
     use bindings::kyyn::source::{control, evidence};
-    use graph_population::{Method, PopulationConfig, Request, Response, Transport};
+    use graph_population::{
+        ArtifactOutcome, BatchCompletion, Method, PopulationConfig, Request, Response, Transport,
+    };
 
     const GRAPH_ORIGIN: &str = "https://graph.microsoft.com";
-    const RESPONSE_CAP: u64 = 64 * 1024 * 1024;
+    // A single provider response remains well below the component's 128 MiB
+    // linear-memory ceiling even while its compact evidence representation is
+    // being encoded. Logical result cardinality is handled by Pending batches.
+    const RESPONSE_CAP: u64 = 8 * 1024 * 1024;
 
     struct GraphTransport;
 
@@ -26,7 +31,6 @@ mod guest {
         fn send(&mut self, request: &Request) -> Result<Response, String> {
             let method = match request.method {
                 Method::Get => HostMethod::Get,
-                Method::Post => HostMethod::Post,
             };
             let response = http::fetch(&http::Request {
                 purpose: Purpose::Observe,
@@ -103,58 +107,83 @@ mod guest {
             let RunSpec::Window(window) = request.spec else {
                 return Err("graph-org-meetings is a windowed source".into());
             };
-            let run = graph_population::fetch_meetings(
+            let mut item_drafts = Vec::new();
+            let mut unavailable = 0usize;
+            let run = graph_population::fetch_meeting_batch(
                 &mut GraphTransport,
                 &config,
                 &window.start,
                 &window.until,
+                request.checkpoint.as_deref(),
+                |meeting| {
+                    unavailable += usize::from(matches!(
+                        meeting.transcript,
+                        ArtifactOutcome::Unavailable { .. }
+                    )) + usize::from(matches!(
+                        meeting.attendance,
+                        ArtifactOutcome::Unavailable { .. }
+                    ));
+                    let meeting_bytes = serde_json::to_vec(&meeting)
+                        .map_err(|_| "could not encode joined meeting evidence".to_string())?;
+                    let file_name = format!(
+                        "meetings/{}.json",
+                        meeting.id.strip_prefix("occurrence:v1:").ok_or_else(|| {
+                            "meeting occurrence identity is invalid".to_string()
+                        })?
+                    );
+                    let meeting_sha256 = write_evidence(&file_name, &meeting_bytes)?;
+                    item_drafts.push((
+                        meeting.id,
+                        meeting.observed_by_user_principal_name,
+                        file_name,
+                        meeting_sha256,
+                    ));
+                    Ok(())
+                },
             )?;
-            let roster_bytes = serde_json::to_vec_pretty(&run.roster)
+            if item_drafts.len() != run.item_count {
+                return Err("joined meeting batch item count changed during emission".into());
+            }
+            let roster_bytes = serde_json::to_vec(&run.roster)
                 .map_err(|_| "could not encode population roster evidence".to_string())?;
             let roster_sha256 = write_evidence("population.json", &roster_bytes)?;
-            let meeting_bytes = serde_json::to_vec_pretty(&run.meetings)
-                .map_err(|_| "could not encode population meeting evidence".to_string())?;
-            write_evidence("meetings.json", &meeting_bytes)?;
-            let items = run
-                .meetings
-                .iter()
-                .map(|meeting| {
-                    Ok(Item {
-                        id: meeting.id.clone(),
-                        kind: "org-meeting".into(),
-                        version: None,
-                        content_hash: kyyn_source_bundle::canonical_record_sha256(meeting)
-                            .map_err(|error| error.to_string())?,
-                        files: vec!["population.json".into(), "meetings.json".into()],
-                        primary: "meetings.json".into(),
-                        file_hashes: vec![("population.json".into(), roster_sha256.clone())],
-                        locator: Some(meeting.id.clone()),
-                        meta: format!(
-                            "meeting evidence for {}",
-                            meeting.member_user_principal_name
-                        ),
-                    })
+            let items = item_drafts
+                .into_iter()
+                .map(|(id, observer, file_name, meeting_sha256)| Item {
+                    id,
+                    kind: "org-meeting".into(),
+                    version: None,
+                    content_hash: meeting_sha256,
+                    files: vec!["population.json".into(), file_name.clone()],
+                    primary: file_name,
+                    file_hashes: vec![("population.json".into(), roster_sha256.clone())],
+                    locator: None,
+                    meta: format!("meeting evidence for {observer}"),
                 })
-                .collect::<Result<Vec<_>, String>>()?;
-            let unavailable = run
-                .meetings
-                .iter()
-                .flat_map(|meeting| &meeting.diagnostics)
-                .count();
+                .collect::<Vec<_>>();
             control::progress(&format!(
                 "{} population meetings observed across {} members",
                 items.len(),
                 run.roster.len()
             ));
+            let (completion, next_checkpoint) = match run.completion {
+                BatchCompletion::Complete => (FetchCompletion::Complete, None),
+                BatchCompletion::Pending { checkpoint } => (
+                    FetchCompletion::Pending(Pending {
+                        retry_after_seconds: None,
+                    }),
+                    Some(checkpoint),
+                ),
+            };
             Ok(FetchResult {
-                completion: FetchCompletion::Complete,
+                completion,
                 attempt_context_sha256: Some(roster_sha256.clone()),
                 items,
                 notes: format!(
                     "{} members; {unavailable} unavailable artifact outcome(s); population sha256 {roster_sha256}",
                     run.roster.len(),
                 ),
-                next_checkpoint: None,
+                next_checkpoint,
             })
         }
     }
