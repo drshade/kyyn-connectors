@@ -134,7 +134,7 @@ mod guest {
             )?;
             let query_bytes = serde_json::to_vec_pretty(&run.query)
                 .map_err(|_| "could not encode audit-query evidence".to_string())?;
-            write_evidence("audit-query.json", &query_bytes)?;
+            let query_sha256 = write_evidence("audit-query.json", &query_bytes)?;
             let record_bytes = serde_json::to_vec_pretty(&run.records)
                 .map_err(|_| "could not encode audit-record evidence".to_string())?;
             write_evidence("audit-records.json", &record_bytes)?;
@@ -153,7 +153,11 @@ mod guest {
                             "audit-query.json".into(),
                             "audit-records.json".into(),
                         ],
-                        file_hashes: Vec::new(),
+                        primary: "audit-records.json".into(),
+                        file_hashes: vec![
+                            ("population.json".into(), roster_sha256.clone()),
+                            ("audit-query.json".into(), query_sha256.clone()),
+                        ],
                         locator: Some(record.id.clone()),
                         meta: "Microsoft 365 meeting audit record".into(),
                     })
@@ -181,6 +185,7 @@ mod guest {
                         completion: FetchCompletion::Pending(Pending {
                             retry_after_seconds,
                         }),
+                        attempt_context_sha256: Some(roster_sha256.clone()),
                         items,
                         notes,
                         next_checkpoint: Some(checkpoint),
@@ -194,6 +199,7 @@ mod guest {
                     ));
                     Ok(FetchResult {
                         completion: FetchCompletion::Complete,
+                        attempt_context_sha256: Some(roster_sha256),
                         items,
                         notes,
                         next_checkpoint: None,

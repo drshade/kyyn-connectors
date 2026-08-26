@@ -123,6 +123,7 @@ mod guest {
             if request.checkpoint.as_deref() == Some(head.as_str()) {
                 return Ok(FetchResult {
                     completion: FetchCompletion::Complete,
+                    attempt_context_sha256: None,
                     items: Vec::new(),
                     notes: format!("unchanged at {short}"),
                     next_checkpoint: Some(head),
@@ -167,6 +168,7 @@ mod guest {
                     version: None,
                     content_hash: stored.sha256,
                     files: vec![entry.path.clone()],
+                    primary: entry.path.clone(),
                     file_hashes: Vec::new(),
                     locator: None,
                     meta: format!("{} · {short}", entry.path),
@@ -175,6 +177,7 @@ mod guest {
             control::progress(&format!("{} file(s) matched at {short}", items.len()));
             Ok(FetchResult {
                 completion: FetchCompletion::Complete,
+                attempt_context_sha256: None,
                 items,
                 notes: notes.join("; "),
                 next_checkpoint: Some(head),

@@ -113,6 +113,7 @@ mod guest {
             if request.checkpoint.as_deref() == Some(config.rev.as_str()) {
                 return Ok(FetchResult {
                     completion: FetchCompletion::Complete,
+                    attempt_context_sha256: None,
                     items: Vec::new(),
                     notes: format!("pack '{}' unchanged at {short}", config.template),
                     next_checkpoint: Some(config.rev),
@@ -161,6 +162,7 @@ mod guest {
                     version: None,
                     content_hash: stored.sha256,
                     files: vec![rel.into()],
+                    primary: rel.into(),
                     file_hashes: Vec::new(),
                     locator: None,
                     meta: format!("{} · {rel} · {short}", config.template),
@@ -173,6 +175,7 @@ mod guest {
             ));
             Ok(FetchResult {
                 completion: FetchCompletion::Complete,
+                attempt_context_sha256: None,
                 items,
                 notes: format!("pack '{}' at {short}", config.template),
                 next_checkpoint: Some(config.rev),

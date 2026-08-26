@@ -260,6 +260,7 @@ mod guest {
                 content_hash: kyyn_source_bundle::canonical_record_sha256(record)
                     .map_err(|error| error.to_string())?,
                 files: vec!["records.json".into()],
+                primary: "records.json".into(),
                 file_hashes: Vec::new(),
                 locator: Some(id),
                 meta: format!("{sobject} · {name}"),
@@ -268,6 +269,7 @@ mod guest {
         control::progress(&format!("{} records returned", items.len()));
         Ok(FetchResult {
             completion: FetchCompletion::Complete,
+            attempt_context_sha256: None,
             notes: format!("{} record(s) from SOQL", items.len()),
             items,
             next_checkpoint: None,

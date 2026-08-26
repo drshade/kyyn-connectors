@@ -126,7 +126,8 @@ mod guest {
                         content_hash: kyyn_source_bundle::canonical_record_sha256(meeting)
                             .map_err(|error| error.to_string())?,
                         files: vec!["population.json".into(), "meetings.json".into()],
-                        file_hashes: Vec::new(),
+                        primary: "meetings.json".into(),
+                        file_hashes: vec![("population.json".into(), roster_sha256.clone())],
                         locator: Some(meeting.id.clone()),
                         meta: format!(
                             "meeting evidence for {}",
@@ -147,6 +148,7 @@ mod guest {
             ));
             Ok(FetchResult {
                 completion: FetchCompletion::Complete,
+                attempt_context_sha256: Some(roster_sha256.clone()),
                 items,
                 notes: format!(
                     "{} members; {unavailable} unavailable artifact outcome(s); population sha256 {roster_sha256}",

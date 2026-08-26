@@ -462,6 +462,7 @@ mod guest {
             version: item.etag.clone().or(item.last_modified_date_time.clone()),
             content_hash: stored.sha256,
             files: vec![library_path.clone()],
+            primary: library_path.clone(),
             file_hashes: Vec::new(),
             locator: Some(format!(
                 "microsoft-file:{}/{}",
@@ -567,6 +568,7 @@ mod guest {
         control::progress(&accumulator.notes[0]);
         Ok(FetchResult {
             completion: FetchCompletion::Complete,
+            attempt_context_sha256: None,
             items: accumulator.items,
             notes: accumulator.notes.join("; "),
             next_checkpoint: Some(

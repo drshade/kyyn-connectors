@@ -362,6 +362,7 @@ mod guest {
                     content_hash: kyyn_source_bundle::canonical_record_sha256(event)
                         .map_err(|error| error.to_string())?,
                     files: vec!["events.json".into()],
+                    primary: "events.json".into(),
                     file_hashes: Vec::new(),
                     locator: Some(event.id.clone()),
                     meta: event.subject.clone().unwrap_or_default(),
@@ -371,6 +372,7 @@ mod guest {
         control::progress(&format!("{} events in window", items.len()));
         Ok(FetchResult {
             completion: FetchCompletion::Complete,
+            attempt_context_sha256: None,
             notes: format!("{} events", items.len()),
             items,
             next_checkpoint: None,
@@ -652,6 +654,7 @@ mod guest {
                                 .filter_map(|attachment| attachment.file.clone()),
                         )
                         .collect(),
+                    primary: "emails.json".into(),
                     file_hashes: email
                         .attachments
                         .iter()
@@ -667,6 +670,7 @@ mod guest {
         control::progress(&format!("{} messages in window", items.len()));
         Ok(FetchResult {
             completion: FetchCompletion::Complete,
+            attempt_context_sha256: None,
             notes: format!("{} emails", items.len()),
             items,
             next_checkpoint: None,
@@ -863,6 +867,7 @@ mod guest {
                     content_hash: kyyn_source_bundle::canonical_record_sha256(message)
                         .map_err(|error| error.to_string())?,
                     files: vec!["chats.json".into()],
+                    primary: "chats.json".into(),
                     file_hashes: Vec::new(),
                     locator: Some(message.id.clone()),
                     meta: chat.topic.clone().unwrap_or_else(|| "chat".into()),
@@ -871,6 +876,7 @@ mod guest {
         }
         Ok(FetchResult {
             completion: FetchCompletion::Complete,
+            attempt_context_sha256: None,
             notes: format!("{} chat messages in window", items.len()),
             items,
             next_checkpoint: None,
@@ -1200,6 +1206,7 @@ mod guest {
                     files: std::iter::once("meetings.json".into())
                         .chain(hashes.iter().map(|(path, _)| path.clone()))
                         .collect(),
+                    primary: "meetings.json".into(),
                     file_hashes: hashes,
                     locator: Some(meeting.id.clone()),
                     meta: meeting.subject.clone().unwrap_or_default(),
@@ -1208,6 +1215,7 @@ mod guest {
             .collect::<Result<Vec<_>, String>>()?;
         Ok(FetchResult {
             completion: FetchCompletion::Complete,
+            attempt_context_sha256: None,
             notes: format!("{} meetings (artifacts where organizer)", items.len()),
             items,
             next_checkpoint: None,
@@ -1306,6 +1314,7 @@ mod guest {
             ) {
                 return Ok(FetchResult {
                     completion: FetchCompletion::Complete,
+                    attempt_context_sha256: None,
                     items: Vec::new(),
                     notes: format!("'{}' unchanged", root.name),
                     next_checkpoint: checkpoint,
@@ -1314,6 +1323,7 @@ mod guest {
             if root.size.is_some_and(|size| size > config.max_file_bytes) {
                 return Ok(FetchResult {
                     completion: FetchCompletion::Complete,
+                    attempt_context_sha256: None,
                     items: Vec::new(),
                     notes: format!("skipped '{}' (over size cap)", root.name),
                     next_checkpoint: checkpoint,
@@ -1332,6 +1342,7 @@ mod guest {
             {
                 return Ok(FetchResult {
                     completion: FetchCompletion::Complete,
+                    attempt_context_sha256: None,
                     items: Vec::new(),
                     notes: format!("'{name}' unchanged (content hash match)"),
                     next_checkpoint: Some(stored.sha256),
@@ -1342,12 +1353,14 @@ mod guest {
                 .unwrap_or_else(|| stored.sha256.clone());
             return Ok(FetchResult {
                 completion: FetchCompletion::Complete,
+                attempt_context_sha256: None,
                 items: vec![Item {
                     id: sharing_url.into(),
                     kind: config.kind.clone(),
                     version: provider_version,
                     content_hash: stored.sha256,
                     files: vec![name.clone()],
+                    primary: name.clone(),
                     file_hashes: Vec::new(),
                     locator: None,
                     meta: format!(
@@ -1452,6 +1465,7 @@ mod guest {
                 version: child.etag,
                 content_hash: stored.sha256,
                 files: vec![relative.clone()],
+                primary: relative.clone(),
                 file_hashes: Vec::new(),
                 locator: None,
                 meta: format!(
@@ -1467,6 +1481,7 @@ mod guest {
         );
         Ok(FetchResult {
             completion: FetchCompletion::Complete,
+            attempt_context_sha256: None,
             items,
             notes: notes.join("; "),
             next_checkpoint: Some(ron::to_string(&next).map_err(|error| error.to_string())?),

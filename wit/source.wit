@@ -223,6 +223,9 @@ interface api {
         version: option<string>,
         content-hash: string,
         files: list<string>,
+        /// Exact member of `files` that `content-hash` and an optional
+        /// locator describe. Bundle ordering carries no semantic meaning.
+        primary: string,
         file-hashes: list<tuple<string, string>>,
         locator: option<string>,
         meta: string,
@@ -238,13 +241,20 @@ interface api {
         /// The requested run spec was fully observed, even when it yielded no
         /// items. A published complete window may advance.
         complete,
-        /// Remote read preparation is durable but not complete. Pending
-        /// results carry no items and require a successor checkpoint.
+        /// A durable but inactive batch of a logical attempt. Pending results
+        /// may carry complete items and require a successor checkpoint; Kyyn
+        /// activates the accumulated attempt only when a later batch is
+        /// complete.
         pending(pending),
     }
 
     record fetch-result {
         completion: fetch-completion,
+        /// Connector-computed digest of the canonical observation context
+        /// captured before item collection (for example, a population
+        /// roster). Required by Kyyn for every resumable Pending chain and
+        /// folded into the engine-owned logical-attempt identity.
+        attempt-context-sha256: option<string>,
         items: list<item>,
         notes: string,
         next-checkpoint: option<string>,
