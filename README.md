@@ -69,8 +69,8 @@ The Microsoft provider supports two explicit principal classes. Delegated
 human Connections retain the existing device-code journey and local refresh
 credential. Workload application Connections use the `client-secret` recipe:
 the accepted Connection names an explicit tenant and Entra application id,
-while each invocation binds `client-secret` from a named environment variable,
-absolute regular file, or bounded stdin. The provider exchanges it through the
+while Kyyn supplies `client-secret` from local enrollment or a complete
+invocation override. The provider exchanges it through the
 tenant token endpoint using the OAuth client-credentials `.default` scope and
 returns only the short-lived bearer authorization to Kyyn; it writes no
 workload credential or token to durable Connection state.
@@ -114,10 +114,10 @@ visible deployment authority and are not narrowed by Kyyn's request boundary.
 The Salesforce provider and SOQL source also support delegated and workload
 principals. A workload Connection uses the `client-secret` recipe: the accepted
 Connection carries the exact Salesforce My Domain and application consumer key,
-while the invocation supplies only its runner-local consumer secret. The
+while Kyyn supplies only its reviewed consumer secret. The
 provider exchanges those values through Salesforce's OAuth client-credentials
 flow and returns the short-lived integration-user bearer token without storing
-the secret or token. The Salesforce administrator separately selects the
+the token. The Salesforce administrator separately selects the
 least-privilege integration **Run As** user and grants the application only the
 API scopes and object access the standing SOQL sources require.
 

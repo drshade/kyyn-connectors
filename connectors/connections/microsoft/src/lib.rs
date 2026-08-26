@@ -348,7 +348,7 @@ mod guest {
             if workload_recipe_selected()? {
                 workload_authorization(&config)?;
                 return Ok(ConnectionStatus::Enrolled(
-                    "Microsoft workload application (runner-bound, credential verified)".into(),
+                    "Microsoft workload application (credential verified)".into(),
                 ));
             }
             if stored_capabilities().as_ref() != Some(&capabilities) {

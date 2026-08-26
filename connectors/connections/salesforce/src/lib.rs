@@ -240,7 +240,7 @@ mod guest {
             if workload_recipe_selected()? {
                 workload_authorization(&config)?;
                 return Ok(ConnectionStatus::Enrolled(
-                    "Salesforce workload application (runner-bound, credential verified)".into(),
+                    "Salesforce workload application (credential verified)".into(),
                 ));
             }
             if !capabilities_match(&capabilities) {
