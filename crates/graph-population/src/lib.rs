@@ -14,7 +14,13 @@ const MAX_COLLECTION_BYTES: usize = 16 * 1024 * 1024;
 // A worst-case accepted 320-byte UPN plus serialization overhead must fit both
 // sides of Kyyn's immutable 1 MiB configurator envelope.
 const MAX_MEMBERS: usize = 3_000;
-const CALENDAR_PAGE_SIZE: usize = 25;
+const CALENDAR_PAGE_SIZE: usize = 500;
+const CALENDAR_BATCH_WIDTH: usize = 8;
+// One evidence file per emitted item plus the shared roster must fit Kyyn's
+// 4,096-file source invocation allowance. Thirty-two sparse waves also bound
+// provider calls and guest execution without turning one wave into one batch.
+const MAX_BATCH_ITEMS: usize = 4_095;
+const MAX_CALENDAR_WAVES: usize = 32;
 const CALENDAR_FIELDS: &str = "iCalUId,subject,start,end,organizer,attendees,isOnlineMeeting,onlineMeeting,isCancelled,categories,type,seriesMasterId,responseStatus";
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -203,6 +209,9 @@ pub struct Response {
 
 pub trait Transport {
     fn send(&mut self, request: &Request) -> Result<Response, String>;
+    fn send_many(&mut self, requests: &[Request]) -> Result<Vec<Result<Response, String>>, String> {
+        Ok(requests.iter().map(|request| self.send(request)).collect())
+    }
     fn sleep_ms(&mut self, milliseconds: u64);
 }
 
@@ -225,7 +234,27 @@ pub enum BatchCompletion {
 pub struct MeetingBatch {
     pub roster: Vec<RosterMember>,
     pub item_count: usize,
+    pub unavailable_members: Vec<MemberUnavailable>,
     pub completion: BatchCompletion,
+}
+
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MemberUnavailable {
+    pub id: String,
+    pub member_id: String,
+    pub user_principal_name: String,
+    pub window_start: String,
+    pub window_until: String,
+    pub reason: MemberUnavailableReason,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub provider_code: Option<String>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum MemberUnavailableReason {
+    MailboxUnavailable,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -285,9 +314,15 @@ pub enum UnavailableReason {
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 struct BatchCheckpoint {
     version: u8,
+    next_member_index: usize,
+    pending: Vec<MemberCursor>,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct MemberCursor {
     member_index: usize,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    page_path: Option<String>,
+    page_path: String,
 }
 
 #[derive(Clone, Debug)]
@@ -369,69 +404,103 @@ pub fn fetch_meeting_batch<T: Transport, F: FnMut(PopulationMeeting) -> Result<(
 ) -> Result<MeetingBatch, String> {
     config.validate()?;
     let roster = resolve_roster(transport, &config.scope)?;
-    let cursor = parse_batch_checkpoint(checkpoint)?;
-    if cursor.member_index > roster.len() {
-        return Err("meeting batch checkpoint is outside the resolved population".into());
-    }
-    if cursor.member_index == roster.len() {
-        return Ok(MeetingBatch {
-            roster,
-            item_count: 0,
-            completion: BatchCompletion::Complete,
-        });
-    }
+    let mut cursor = parse_batch_checkpoint(checkpoint)?;
+    validate_batch_checkpoint(&cursor, &roster)?;
+    let mut item_count = 0usize;
+    let mut unavailable_members = Vec::new();
+    let mut waves = 0usize;
+    loop {
+        let used_items = item_count
+            .checked_add(unavailable_members.len())
+            .ok_or_else(|| "meeting batch item count overflowed".to_string())?;
+        let remaining_items = MAX_BATCH_ITEMS.saturating_sub(used_items);
+        let wave_width = CALENDAR_BATCH_WIDTH.min(remaining_items / CALENDAR_PAGE_SIZE);
+        if waves == MAX_CALENDAR_WAVES || wave_width == 0 || cursor.pending.len() > wave_width {
+            break;
+        }
+        while cursor.pending.len() < wave_width && cursor.next_member_index < roster.len() {
+            let member_index = cursor.next_member_index;
+            cursor.next_member_index += 1;
+            cursor.pending.push(MemberCursor {
+                member_index,
+                page_path: calendar_path(&roster[member_index], start, until),
+            });
+        }
+        if cursor.pending.is_empty() {
+            break;
+        }
 
-    let member = &roster[cursor.member_index];
-    let initial_path = calendar_path(member, start, until);
-    let page_path = cursor.page_path.as_deref().unwrap_or(&initial_path);
-    validate_calendar_checkpoint_path(page_path, member)?;
-    let page = get_collection_page(transport, page_path, MissingOutcome::Unavailable)
-        .map_err(ObservationError::into_failure)?;
+        let active = std::mem::take(&mut cursor.pending);
+        let requests = active
+            .iter()
+            .map(|member| calendar_request(member.page_path.clone()))
+            .collect::<Vec<_>>();
+        let responses = request_many_with_retry(transport, &requests)?;
+        if responses.len() != active.len() {
+            return Err("concurrent Graph transport changed the calendar result count".into());
+        }
 
-    let mut events = Vec::new();
-    for event in page.values {
-        if !is_canonical_observer(&event, member, &roster) {
-            continue;
-        }
-        let id = event_occurrence_identity(&event)?;
-        events.push((id, event));
-    }
-    events.sort_by(|left, right| left.0.cmp(&right.0));
-    if events.windows(2).any(|pair| pair[0].0 == pair[1].0) {
-        return Err("Graph calendar page contains duplicate meeting occurrences".into());
-    }
-    let item_count = events.len();
-    for (expected_id, event) in events {
-        let meeting = observe_meeting(transport, member, &roster, event)?;
-        if meeting.id != expected_id {
-            return Err("meeting occurrence identity changed during observation".into());
-        }
-        emit(meeting)?;
-    }
+        let mut pending = Vec::new();
+        for (member_cursor, response) in active.into_iter().zip(responses) {
+            let member = &roster[member_cursor.member_index];
+            let page = match collection_page_from_response(response, MissingOutcome::Unavailable) {
+                Ok(page) => page,
+                Err(ObservationError::Unavailable(code))
+                    if mailbox_unavailable(code.as_deref()) =>
+                {
+                    unavailable_members.push(member_unavailable(member, start, until, code));
+                    continue;
+                }
+                Err(error) => return Err(error.into_failure()),
+            };
+            if page.values.len() > CALENDAR_PAGE_SIZE {
+                return Err("Graph calendar page exceeded the requested item bound".into());
+            }
 
-    let next = if let Some(page_path) = page.next_path {
-        BatchCheckpoint {
-            version: 1,
-            member_index: cursor.member_index,
-            page_path: Some(page_path),
+            let mut events = Vec::new();
+            for event in page.values {
+                if !is_canonical_observer(&event, member, &roster) {
+                    continue;
+                }
+                let id = event_occurrence_identity(&event)?;
+                events.push((id, event));
+            }
+            events.sort_by(|left, right| left.0.cmp(&right.0));
+            if events.windows(2).any(|pair| pair[0].0 == pair[1].0) {
+                return Err("Graph calendar page contains duplicate meeting occurrences".into());
+            }
+            item_count = item_count
+                .checked_add(events.len())
+                .ok_or_else(|| "meeting batch item count overflowed".to_string())?;
+            for (expected_id, event) in events {
+                let meeting = observe_meeting(transport, member, &roster, event)?;
+                if meeting.id != expected_id {
+                    return Err("meeting occurrence identity changed during observation".into());
+                }
+                emit(meeting)?;
+            }
+            if let Some(page_path) = page.next_path {
+                validate_calendar_checkpoint_path(&page_path, member)?;
+                pending.push(MemberCursor {
+                    member_index: member_cursor.member_index,
+                    page_path,
+                });
+            }
         }
-    } else {
-        BatchCheckpoint {
-            version: 1,
-            member_index: cursor.member_index + 1,
-            page_path: None,
-        }
-    };
-    let completion = if next.member_index == roster.len() && next.page_path.is_none() {
+        cursor.pending = pending;
+        waves += 1;
+    }
+    let completion = if cursor.next_member_index == roster.len() && cursor.pending.is_empty() {
         BatchCompletion::Complete
     } else {
         BatchCompletion::Pending {
-            checkpoint: encode_batch_checkpoint(&next)?,
+            checkpoint: encode_batch_checkpoint(&cursor)?,
         }
     };
     Ok(MeetingBatch {
         roster,
         item_count,
+        unavailable_members,
         completion,
     })
 }
@@ -772,17 +841,55 @@ fn calendar_path(member: &RosterMember, start: &str, until: &str) -> String {
     )
 }
 
+fn calendar_request(path: String) -> Request {
+    Request {
+        method: Method::Get,
+        path,
+        headers: BTreeMap::from([
+            ("accept".into(), "application/json".into()),
+            ("prefer".into(), "outlook.timezone=\"UTC\"".into()),
+        ]),
+        body: None,
+    }
+}
+
+fn mailbox_unavailable(code: Option<&str>) -> bool {
+    matches!(
+        code,
+        Some("MailboxNotEnabledForRESTAPI" | "ErrorMailboxNotEnabledForRESTAPI")
+    )
+}
+
+fn member_unavailable(
+    member: &RosterMember,
+    start: &str,
+    until: &str,
+    provider_code: Option<String>,
+) -> MemberUnavailable {
+    let digest =
+        Sha256::digest(format!("{}\0{start}\0{until}\0mailbox-unavailable", member.id).as_bytes());
+    MemberUnavailable {
+        id: format!("member-observation:v1:{digest:x}"),
+        member_id: member.id.clone(),
+        user_principal_name: member.user_principal_name.clone(),
+        window_start: start.into(),
+        window_until: until.into(),
+        reason: MemberUnavailableReason::MailboxUnavailable,
+        provider_code,
+    }
+}
+
 fn parse_batch_checkpoint(checkpoint: Option<&str>) -> Result<BatchCheckpoint, String> {
     let Some(checkpoint) = checkpoint else {
         return Ok(BatchCheckpoint {
-            version: 1,
-            member_index: 0,
-            page_path: None,
+            version: 2,
+            next_member_index: 0,
+            pending: Vec::new(),
         });
     };
     let parsed: BatchCheckpoint = serde_json::from_str(checkpoint)
         .map_err(|_| "meeting batch checkpoint is invalid".to_string())?;
-    if parsed.version != 1 {
+    if parsed.version != 2 {
         return Err("meeting batch checkpoint has an unsupported version".into());
     }
     Ok(parsed)
@@ -791,6 +898,30 @@ fn parse_batch_checkpoint(checkpoint: Option<&str>) -> Result<BatchCheckpoint, S
 fn encode_batch_checkpoint(checkpoint: &BatchCheckpoint) -> Result<String, String> {
     serde_json::to_string(checkpoint)
         .map_err(|_| "could not encode meeting batch checkpoint".to_string())
+}
+
+fn validate_batch_checkpoint(
+    checkpoint: &BatchCheckpoint,
+    roster: &[RosterMember],
+) -> Result<(), String> {
+    if checkpoint.next_member_index > roster.len()
+        || checkpoint.pending.len() > CALENDAR_BATCH_WIDTH
+    {
+        return Err("meeting batch checkpoint is outside the resolved population".into());
+    }
+    let mut members = BTreeSet::new();
+    for pending in &checkpoint.pending {
+        if pending.member_index >= checkpoint.next_member_index
+            || !members.insert(pending.member_index)
+        {
+            return Err("meeting batch checkpoint has an invalid pending member set".into());
+        }
+        let member = roster.get(pending.member_index).ok_or_else(|| {
+            "meeting batch checkpoint is outside the resolved population".to_string()
+        })?;
+        validate_calendar_checkpoint_path(&pending.page_path, member)?;
+    }
+    Ok(())
 }
 
 fn validate_calendar_checkpoint_path(path: &str, member: &RosterMember) -> Result<(), String> {
@@ -1180,24 +1311,10 @@ fn get_collection<T: Transport>(
     Ok(values)
 }
 
-fn get_collection_page<T: Transport>(
-    transport: &mut T,
-    path: &str,
+fn collection_page_from_response(
+    response: Response,
     missing: MissingOutcome,
 ) -> Result<CollectionPage, ObservationError> {
-    let response = request_with_retry(
-        transport,
-        &Request {
-            method: Method::Get,
-            path: path.into(),
-            headers: BTreeMap::from([
-                ("accept".into(), "application/json".into()),
-                ("prefer".into(), "outlook.timezone=\"UTC\"".into()),
-            ]),
-            body: None,
-        },
-    )
-    .map_err(ObservationError::Failed)?;
     let code = || {
         provider_inner_error_code(&response.body).or_else(|| provider_error_code(&response.body))
     };
@@ -1270,6 +1387,62 @@ fn request_with_retry<T: Transport>(
         return Ok(response);
     }
     Err("Graph observation exhausted retries".into())
+}
+
+fn request_many_with_retry<T: Transport>(
+    transport: &mut T,
+    requests: &[Request],
+) -> Result<Vec<Response>, String> {
+    if requests.is_empty() || requests.len() > CALENDAR_BATCH_WIDTH {
+        return Err("concurrent Graph request group is outside its bound".into());
+    }
+    let mut pending = requests
+        .iter()
+        .cloned()
+        .enumerate()
+        .map(|(index, request)| (index, request, 1u64))
+        .collect::<Vec<_>>();
+    let mut completed = (0..requests.len()).map(|_| None).collect::<Vec<_>>();
+    while !pending.is_empty() {
+        let wave = pending
+            .iter()
+            .map(|(_, request, _)| request.clone())
+            .collect::<Vec<_>>();
+        let results = transport.send_many(&wave)?;
+        if results.len() != pending.len() {
+            return Err("concurrent Graph transport changed its result count".into());
+        }
+        let mut retry = Vec::new();
+        let mut sleep_milliseconds = 0u64;
+        for ((index, request, attempt), result) in pending.into_iter().zip(results) {
+            let response = result?;
+            if (response.status == 429 || response.status >= 500) && attempt < 5 {
+                let milliseconds = if response.status == 429 {
+                    response
+                        .headers
+                        .get("retry-after")
+                        .and_then(|value| value.parse::<u64>().ok())
+                        .unwrap_or(5)
+                        .min(60)
+                        * 1_000
+                } else {
+                    (1u64 << attempt).min(30) * 1_000
+                };
+                sleep_milliseconds = sleep_milliseconds.max(milliseconds);
+                retry.push((index, request, attempt + 1));
+            } else {
+                completed[index] = Some(response);
+            }
+        }
+        if !retry.is_empty() {
+            transport.sleep_ms(sleep_milliseconds);
+        }
+        pending = retry;
+    }
+    completed
+        .into_iter()
+        .map(|response| response.ok_or_else(|| "concurrent Graph response is missing".into()))
+        .collect()
 }
 
 fn provider_error_code(body: &[u8]) -> Option<String> {
@@ -1346,6 +1519,8 @@ mod tests {
     struct ScriptTransport {
         exchanges: VecDeque<(String, Response)>,
         requested: Vec<String>,
+        concurrent: Vec<Vec<String>>,
+        sleeps: Vec<u64>,
     }
 
     impl ScriptTransport {
@@ -1353,6 +1528,8 @@ mod tests {
             Self {
                 exchanges: exchanges.into(),
                 requested: Vec::new(),
+                concurrent: Vec::new(),
+                sleeps: Vec::new(),
             }
         }
 
@@ -1376,7 +1553,25 @@ mod tests {
             Ok(response)
         }
 
-        fn sleep_ms(&mut self, _milliseconds: u64) {}
+        fn send_many(
+            &mut self,
+            requests: &[Request],
+        ) -> Result<Vec<Result<Response, String>>, String> {
+            self.concurrent.push(
+                requests
+                    .iter()
+                    .map(|request| request.path.clone())
+                    .collect(),
+            );
+            requests
+                .iter()
+                .map(|request| self.send(request).map(Ok))
+                .collect()
+        }
+
+        fn sleep_ms(&mut self, milliseconds: u64) {
+            self.sleeps.push(milliseconds);
+        }
     }
 
     fn response(status: u16, body: Value) -> Response {
@@ -1438,7 +1633,7 @@ mod tests {
     }
 
     #[test]
-    fn batches_one_calendar_page_and_deduplicates_under_the_organizer_route() {
+    fn batches_member_calendars_concurrently_and_deduplicates_under_the_organizer_route() {
         let config = selected(&["alpha@example.test", "beta@example.test"]);
         let alpha = RosterMember {
             id: "user-alpha".into(),
@@ -1446,7 +1641,14 @@ mod tests {
             display_name: Some("Alpha".into()),
             mail: Some("alpha@example.test".into()),
         };
+        let beta = RosterMember {
+            id: "user-beta".into(),
+            user_principal_name: "beta@example.test".into(),
+            display_name: Some("Beta".into()),
+            mail: Some("beta@example.test".into()),
+        };
         let first_calendar = calendar_path(&alpha, "2026-08-01T00:00:00Z", "2026-08-02T00:00:00Z");
+        let second_calendar = calendar_path(&beta, "2026-08-01T00:00:00Z", "2026-08-02T00:00:00Z");
         let lookup = "/v1.0/users/user-beta/onlineMeetings?$filter=JoinWebUrl%20eq%20'https%3A%2F%2Fteams.example.test%2Fmeet%2Fone'";
         let mut first = ScriptTransport::new(vec![
             selected_user("alpha@example.test", "user-alpha"),
@@ -1454,6 +1656,10 @@ mod tests {
             (
                 first_calendar.clone(),
                 response(200, json!({ "value": [meeting_event("copy-alpha", "beta@example.test")] })),
+            ),
+            (
+                second_calendar.clone(),
+                response(200, json!({ "value": [meeting_event("copy-beta", "beta@example.test")] })),
             ),
             (
                 lookup.into(),
@@ -1486,7 +1692,13 @@ mod tests {
         )
         .unwrap();
         assert!(first.exhausted());
+        assert_eq!(
+            first.concurrent,
+            [vec![first_calendar.clone(), second_calendar.clone()]]
+        );
         assert_eq!(batch.item_count, 1);
+        assert!(batch.unavailable_members.is_empty());
+        assert_eq!(batch.completion, BatchCompletion::Complete);
         let meeting = &emitted[0];
         assert_eq!(meeting.observed_by_member_id, "user-alpha");
         assert!(matches!(
@@ -1511,45 +1723,188 @@ mod tests {
                 .collect::<BTreeSet<_>>(),
             CALENDAR_FIELDS.split(',').map(str::to_string).collect()
         );
-        let checkpoint = match batch.completion {
-            BatchCompletion::Pending { checkpoint } => checkpoint,
-            BatchCompletion::Complete => panic!("two-member population must resume"),
-        };
+    }
 
+    #[test]
+    fn mailbox_unavailable_is_bounded_member_evidence_not_a_run_failure() {
+        let config = selected(&["alpha@example.test", "beta@example.test"]);
+        let alpha = RosterMember {
+            id: "user-alpha".into(),
+            user_principal_name: "alpha@example.test".into(),
+            display_name: Some("Alpha".into()),
+            mail: Some("alpha@example.test".into()),
+        };
         let beta = RosterMember {
             id: "user-beta".into(),
             user_principal_name: "beta@example.test".into(),
             display_name: Some("Beta".into()),
             mail: Some("beta@example.test".into()),
         };
-        let mut second = ScriptTransport::new(vec![
+        let alpha_calendar = calendar_path(&alpha, "2026-08-01T00:00:00Z", "2026-08-02T00:00:00Z");
+        let beta_calendar = calendar_path(&beta, "2026-08-01T00:00:00Z", "2026-08-02T00:00:00Z");
+        let mut transport = ScriptTransport::new(vec![
             selected_user("alpha@example.test", "user-alpha"),
             selected_user("beta@example.test", "user-beta"),
             (
-                calendar_path(&beta, "2026-08-01T00:00:00Z", "2026-08-02T00:00:00Z"),
+                alpha_calendar.clone(),
                 response(
-                    200,
-                    json!({ "value": [meeting_event("copy-beta", "beta@example.test")] }),
+                    404,
+                    json!({ "error": { "code": "MailboxNotEnabledForRESTAPI" } }),
                 ),
             ),
+            (beta_calendar.clone(), response(200, json!({ "value": [] }))),
         ]);
-        let mut emitted = Vec::new();
+
         let batch = fetch_meeting_batch(
+            &mut transport,
+            &config,
+            "2026-08-01T00:00:00Z",
+            "2026-08-02T00:00:00Z",
+            None,
+            |_| panic!("empty calendars must not emit meetings"),
+        )
+        .unwrap();
+
+        assert!(transport.exhausted());
+        assert_eq!(transport.concurrent, [vec![alpha_calendar, beta_calendar]]);
+        assert_eq!(batch.item_count, 0);
+        assert_eq!(batch.completion, BatchCompletion::Complete);
+        assert_eq!(batch.unavailable_members.len(), 1);
+        let unavailable = &batch.unavailable_members[0];
+        assert_eq!(unavailable.member_id, "user-alpha");
+        assert_eq!(unavailable.user_principal_name, "alpha@example.test");
+        assert_eq!(
+            unavailable.reason,
+            MemberUnavailableReason::MailboxUnavailable
+        );
+        assert_eq!(
+            unavailable.provider_code.as_deref(),
+            Some("MailboxNotEnabledForRESTAPI")
+        );
+        assert!(unavailable.id.starts_with("member-observation:v1:"));
+    }
+
+    #[test]
+    fn sparse_population_runs_successive_waves_until_execution_bound() {
+        let users = (0..257)
+            .map(|index| format!("member-{index}@example.test"))
+            .collect::<Vec<_>>();
+        let user_refs = users.iter().map(String::as_str).collect::<Vec<_>>();
+        let config = selected(&user_refs);
+        let mut members = users
+            .iter()
+            .enumerate()
+            .map(|(index, upn)| RosterMember {
+                id: format!("user-{index}"),
+                user_principal_name: upn.clone(),
+                display_name: Some(upn.clone()),
+                mail: Some(upn.clone()),
+            })
+            .collect::<Vec<_>>();
+        members.sort_by(|left, right| {
+            left.user_principal_name
+                .cmp(&right.user_principal_name)
+                .then_with(|| left.id.cmp(&right.id))
+        });
+        let roster_exchanges = || {
+            users
+                .iter()
+                .enumerate()
+                .map(|(index, upn)| selected_user(upn, &format!("user-{index}")))
+                .collect::<Vec<_>>()
+        };
+        let calendar_exchange = |member: &RosterMember| {
+            (
+                calendar_path(member, "2026-08-01T00:00:00Z", "2026-08-02T00:00:00Z"),
+                response(200, json!({ "value": [] })),
+            )
+        };
+
+        let mut first_exchanges = roster_exchanges();
+        first_exchanges.extend(members[..256].iter().map(calendar_exchange));
+        let mut first = ScriptTransport::new(first_exchanges);
+        let first_batch = fetch_meeting_batch(
+            &mut first,
+            &config,
+            "2026-08-01T00:00:00Z",
+            "2026-08-02T00:00:00Z",
+            None,
+            |_| panic!("empty calendars must not emit meetings"),
+        )
+        .unwrap();
+        assert!(first.exhausted());
+        assert_eq!(first.concurrent.len(), MAX_CALENDAR_WAVES);
+        assert!(
+            first
+                .concurrent
+                .iter()
+                .all(|wave| wave.len() == CALENDAR_BATCH_WIDTH)
+        );
+        assert!(
+            first.concurrent[0]
+                .iter()
+                .all(|path| path.contains("$top=500"))
+        );
+        let BatchCompletion::Pending { checkpoint } = first_batch.completion else {
+            panic!("member beyond the execution-wave bound must remain checkpointed");
+        };
+
+        let mut second_exchanges = roster_exchanges();
+        second_exchanges.push(calendar_exchange(&members[256]));
+        let mut second = ScriptTransport::new(second_exchanges);
+        let second_batch = fetch_meeting_batch(
             &mut second,
             &config,
             "2026-08-01T00:00:00Z",
             "2026-08-02T00:00:00Z",
             Some(&checkpoint),
-            |meeting| {
-                emitted.push(meeting);
-                Ok(())
-            },
+            |_| panic!("empty calendars must not emit meetings"),
         )
         .unwrap();
         assert!(second.exhausted());
-        assert_eq!(batch.item_count, 0);
-        assert!(emitted.is_empty());
-        assert_eq!(batch.completion, BatchCompletion::Complete);
+        assert_eq!(second.concurrent.len(), 1);
+        assert_eq!(second.concurrent[0].len(), 1);
+        assert_eq!(second_batch.completion, BatchCompletion::Complete);
+    }
+
+    #[test]
+    fn concurrent_retry_replays_only_retryable_positions_and_preserves_order() {
+        let first = calendar_request("/v1.0/users/first/calendarView?one".into());
+        let second = calendar_request("/v1.0/users/second/calendarView?two".into());
+        let mut throttled = response(429, json!({ "error": { "code": "TooManyRequests" } }));
+        throttled.headers.insert("retry-after".into(), "7".into());
+        let mut transport = ScriptTransport::new(vec![
+            (first.path.clone(), throttled),
+            (
+                second.path.clone(),
+                response(200, json!({ "value": ["second"] })),
+            ),
+            (
+                first.path.clone(),
+                response(200, json!({ "value": ["first"] })),
+            ),
+        ]);
+
+        let responses =
+            request_many_with_retry(&mut transport, &[first.clone(), second.clone()]).unwrap();
+
+        assert!(transport.exhausted());
+        assert_eq!(
+            transport.concurrent,
+            [
+                vec![first.path.clone(), second.path.clone()],
+                vec![first.path]
+            ]
+        );
+        assert_eq!(transport.sleeps, [7_000]);
+        assert_eq!(
+            responses[0].body,
+            serde_json::to_vec(&json!({ "value": ["first"] })).unwrap()
+        );
+        assert_eq!(
+            responses[1].body,
+            serde_json::to_vec(&json!({ "value": ["second"] })).unwrap()
+        );
     }
 
     #[test]
@@ -1646,9 +2001,12 @@ mod tests {
     fn checkpoint_cannot_retarget_a_different_population_member() {
         let config = selected(&["alpha@example.test"]);
         let checkpoint = serde_json::to_string(&BatchCheckpoint {
-            version: 1,
-            member_index: 0,
-            page_path: Some("/v1.0/users/another/calendarView?$skiptoken=escape".into()),
+            version: 2,
+            next_member_index: 1,
+            pending: vec![MemberCursor {
+                member_index: 0,
+                page_path: "/v1.0/users/another/calendarView?$skiptoken=escape".into(),
+            }],
         })
         .unwrap();
         let mut transport =

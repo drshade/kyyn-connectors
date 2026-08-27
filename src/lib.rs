@@ -951,7 +951,7 @@ mod contract {
     #[test]
     fn vendored_source_wit_matches_its_reviewed_fingerprint() {
         const FROZEN_SOURCE_WIT_SHA256: &str =
-            "879f2b8df5eb8e6f0a7cb4577a1d87c560535e0bbc434b3b35bc111e3991aca2";
+            "40dbb84d331bc6ff90c50d0cff640b923f4117c39d21bdc76564646e825a6177";
         assert_eq!(
             format!(
                 "{:x}",
