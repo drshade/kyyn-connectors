@@ -30,6 +30,7 @@ pub enum Proof {
     ExactCalendarSelection,
     OrganizerRouting,
     OccurrenceDeduplication,
+    OccurrenceArtifactJoin,
     PermissionOutcome,
     EmptyAttendanceObserved,
     ClosedArtifactOutcome,
@@ -76,8 +77,8 @@ mod tests {
     #[test]
     fn corpus_is_closed_synthetic_and_covers_the_amended_boundary() {
         let suite = suite();
-        assert_eq!(suite.fixture_version, 2);
-        assert_eq!(suite.scenarios.len(), 4);
+        assert_eq!(suite.fixture_version, 3);
+        assert_eq!(suite.scenarios.len(), 5);
         assert!(!FIXTURE.contains("bee-skills"));
         assert!(!FIXTURE.contains("auditLog"));
         assert!(!FIXTURE.contains("/me/"));
@@ -103,6 +104,7 @@ mod tests {
                 Proof::ExactCalendarSelection,
                 Proof::OrganizerRouting,
                 Proof::OccurrenceDeduplication,
+                Proof::OccurrenceArtifactJoin,
                 Proof::PermissionOutcome,
                 Proof::EmptyAttendanceObserved,
                 Proof::ClosedArtifactOutcome,

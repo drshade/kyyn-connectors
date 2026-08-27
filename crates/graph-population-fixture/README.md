@@ -3,7 +3,8 @@
 This native-only crate freezes ADR 0037's synthetic Microsoft Graph provider
 conversations for the single resumable workload meeting connector. The closed
 corpus independently pins its bounded calendar selection, organizer routing,
-occurrence deduplication and artifact outcome distinctions.
+occurrence deduplication, occurrence-scoped artifact joins and artifact outcome
+distinctions.
 
 The fixtures use reserved `example.test` identities and synthetic provider
 coordinates. They contain no tenant or KB material. Each scenario records

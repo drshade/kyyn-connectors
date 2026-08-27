@@ -167,7 +167,7 @@
             (purpose: Observe, authorization: Connection, authority: "https://graph.microsoft.com", method: Get, path: "/v1.0/users/{segment}/onlineMeetings/{segment}/attendanceReports/{segment}/attendanceRecords"),
          ]),
          component: "components/sources/graph-org-meetings.wasm",
-         component_sha256: "1c64a1e0251abe79bf8b7fa83b668cf97721afab2cb6adab388c16af19d9eb24",
+         component_sha256: "efd7a80ddc3763d9de69ccdf765f6de39a942509aa0d14a282895f401dded076",
          config: [
             (name: "scope_mode", label: Some("Population"), doc: "Choose every enabled organization member or an explicit selected set.", required: true, example: Some("all-members"), custody: Promotable, control: Choice(options: ["all-members", "selected-members"])),
             (name: "selected_users", label: Some("Selected user principal names"), doc: "Lowercase user principal names; required only for Selected members.", ty: StrList, example: Some("member@example.org"), custody: Promotable),

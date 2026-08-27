@@ -21,6 +21,10 @@ const CALENDAR_BATCH_WIDTH: usize = 8;
 // provider calls and guest execution without turning one wave into one batch.
 const MAX_BATCH_ITEMS: usize = 4_095;
 const MAX_CALENDAR_WAVES: usize = 32;
+// Graph retains at most the 50 most recent attendance reports for a recurring
+// meeting series. A full returned window can therefore distinguish aged-out
+// evidence from a report that was never produced.
+const ATTENDANCE_REPORT_RETENTION_LIMIT: usize = 50;
 const CALENDAR_FIELDS: &str = "iCalUId,subject,start,end,organizer,attendees,isOnlineMeeting,onlineMeeting,isCancelled,categories,type,seriesMasterId,responseStatus";
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -274,7 +278,8 @@ pub struct PopulationMeeting {
 #[serde(rename_all = "camelCase")]
 pub struct TranscriptArtifact {
     pub id: String,
-    pub created_date_time: Option<String>,
+    pub created_date_time: String,
+    pub end_date_time: String,
     pub media_type: String,
     pub content: String,
 }
@@ -283,6 +288,8 @@ pub struct TranscriptArtifact {
 #[serde(rename_all = "camelCase")]
 pub struct AttendanceArtifact {
     pub report_id: String,
+    pub meeting_start_date_time: String,
+    pub meeting_end_date_time: String,
     pub records: Vec<Value>,
 }
 
@@ -334,6 +341,14 @@ struct CollectionPage {
 #[derive(Clone, Debug)]
 struct Organizer {
     id: String,
+}
+
+#[derive(Default)]
+struct ObservationCache {
+    organizers: BTreeMap<String, Option<Organizer>>,
+    online_meetings: BTreeMap<(String, String), Vec<Value>>,
+    transcripts: BTreeMap<(String, String), Vec<Value>>,
+    attendance_reports: BTreeMap<(String, String), Vec<Value>>,
 }
 
 #[derive(Deserialize)]
@@ -408,6 +423,8 @@ pub fn fetch_meeting_batch<T: Transport, F: FnMut(PopulationMeeting) -> Result<(
     validate_batch_checkpoint(&cursor, &roster)?;
     let mut item_count = 0usize;
     let mut unavailable_members = Vec::new();
+    let mut emitted_occurrences = BTreeSet::new();
+    let mut observations = ObservationCache::default();
     let mut waves = 0usize;
     loop {
         let used_items = item_count
@@ -463,17 +480,21 @@ pub fn fetch_meeting_batch<T: Transport, F: FnMut(PopulationMeeting) -> Result<(
                     continue;
                 }
                 let id = event_occurrence_identity(&event)?;
-                events.push((id, event));
+                let provider_id =
+                    required_string(&event, "id", "Graph meeting event has no identity")?;
+                events.push((id, provider_id.to_string(), event));
             }
-            events.sort_by(|left, right| left.0.cmp(&right.0));
-            if events.windows(2).any(|pair| pair[0].0 == pair[1].0) {
-                return Err("Graph calendar page contains duplicate meeting occurrences".into());
-            }
-            item_count = item_count
-                .checked_add(events.len())
-                .ok_or_else(|| "meeting batch item count overflowed".to_string())?;
-            for (expected_id, event) in events {
-                let meeting = observe_meeting(transport, member, &roster, event)?;
+            events.sort_by(|left, right| left.0.cmp(&right.0).then_with(|| left.1.cmp(&right.1)));
+            events.dedup_by(|left, right| left.0 == right.0);
+            for (expected_id, _, event) in events {
+                if !emitted_occurrences.insert(expected_id.clone()) {
+                    continue;
+                }
+                item_count = item_count
+                    .checked_add(1)
+                    .ok_or_else(|| "meeting batch item count overflowed".to_string())?;
+                let meeting =
+                    observe_meeting(transport, member, &roster, &mut observations, event)?;
                 if meeting.id != expected_id {
                     return Err("meeting occurrence identity changed during observation".into());
                 }
@@ -509,6 +530,7 @@ fn observe_meeting<T: Transport>(
     transport: &mut T,
     member: &RosterMember,
     roster: &[RosterMember],
+    observations: &mut ObservationCache,
     event: Value,
 ) -> Result<PopulationMeeting, String> {
     let provider_event_id = required_string(&event, "id", "Graph meeting event has no identity")?;
@@ -531,7 +553,7 @@ fn observe_meeting<T: Transport>(
             attendance: unavailable_outcome(UnavailableReason::UnsupportedMeeting, None),
         });
     };
-    let Some(organizer) = resolve_organizer(transport, roster, &event)? else {
+    let Some(organizer) = resolve_organizer(transport, roster, observations, &event)? else {
         return Ok(PopulationMeeting {
             id,
             observed_by_member_id: member.id.clone(),
@@ -548,8 +570,10 @@ fn observe_meeting<T: Transport>(
         encode_segment(&organizer.id),
         encode_strict_query_value(join_url)
     );
-    let resolved = match get_collection(
+    let resolved = match cached_collection(
         transport,
+        &mut observations.online_meetings,
+        (organizer.id.clone(), join_url.to_string()),
         &lookup,
         "Graph meeting lookup paging",
         MissingOutcome::NotFound,
@@ -606,8 +630,21 @@ fn observe_meeting<T: Transport>(
         "id",
         "Graph online meeting has no identity",
     )?;
-    let transcript = fetch_transcripts(transport, &organizer.id, meeting_id)?;
-    let attendance = fetch_attendance(transport, &organizer.id, meeting_id)?;
+    let occurrence = event_interval(&event)?;
+    let transcript = fetch_transcripts(
+        transport,
+        &mut observations.transcripts,
+        &organizer.id,
+        meeting_id,
+        occurrence,
+    )?;
+    let attendance = fetch_attendance(
+        transport,
+        &mut observations.attendance_reports,
+        &organizer.id,
+        meeting_id,
+        occurrence,
+    )?;
     Ok(PopulationMeeting {
         id,
         observed_by_member_id: member.id.clone(),
@@ -622,16 +659,20 @@ fn observe_meeting<T: Transport>(
 
 fn fetch_transcripts<T: Transport>(
     transport: &mut T,
+    metadata_cache: &mut BTreeMap<(String, String), Vec<Value>>,
     organizer_id: &str,
     meeting_id: &str,
+    occurrence: (DateTime<Utc>, DateTime<Utc>),
 ) -> Result<ArtifactOutcome<Vec<TranscriptArtifact>>, String> {
     let path = format!(
         "/v1.0/users/{}/onlineMeetings/{}/transcripts",
         encode_segment(organizer_id),
         encode_segment(meeting_id)
     );
-    let metadata = match get_collection(
+    let metadata = match cached_collection(
         transport,
+        metadata_cache,
+        (organizer_id.to_string(), meeting_id.to_string()),
         &path,
         "Graph transcript paging",
         MissingOutcome::Unavailable,
@@ -647,8 +688,36 @@ fn fetch_transcripts<T: Transport>(
             provider_code: None,
         });
     }
-    let mut artifacts = Vec::with_capacity(metadata.len());
-    for transcript in metadata {
+    let matching = metadata
+        .into_iter()
+        .map(|transcript| {
+            let created = required_timestamp(
+                &transcript,
+                "createdDateTime",
+                "Graph transcript has no created instant",
+            )?;
+            let ended = required_timestamp(
+                &transcript,
+                "endDateTime",
+                "Graph transcript has no end instant",
+            )?;
+            if created > ended {
+                return Err("Graph transcript ends before it was created".into());
+            }
+            Ok((transcript, created, ended))
+        })
+        .collect::<Result<Vec<_>, String>>()?
+        .into_iter()
+        .filter(|(_, created, ended)| intervals_overlap(occurrence, (*created, *ended)))
+        .collect::<Vec<_>>();
+    if matching.is_empty() {
+        return Ok(ArtifactOutcome::Unavailable {
+            reason: UnavailableReason::NotProduced,
+            provider_code: None,
+        });
+    }
+    let mut artifacts = Vec::with_capacity(matching.len());
+    for (transcript, created, ended) in matching {
         let transcript_id = transcript
             .get("id")
             .and_then(Value::as_str)
@@ -700,10 +769,8 @@ fn fetch_transcripts<T: Transport>(
             .map_err(|_| "Graph transcript content was not UTF-8".to_string())?;
         artifacts.push(TranscriptArtifact {
             id: transcript_id.into(),
-            created_date_time: transcript
-                .get("createdDateTime")
-                .and_then(Value::as_str)
-                .map(str::to_string),
+            created_date_time: created.to_rfc3339_opts(SecondsFormat::AutoSi, true),
+            end_date_time: ended.to_rfc3339_opts(SecondsFormat::AutoSi, true),
             media_type: response
                 .headers
                 .get("content-type")
@@ -719,16 +786,20 @@ fn fetch_transcripts<T: Transport>(
 
 fn fetch_attendance<T: Transport>(
     transport: &mut T,
+    metadata_cache: &mut BTreeMap<(String, String), Vec<Value>>,
     organizer_id: &str,
     meeting_id: &str,
+    occurrence: (DateTime<Utc>, DateTime<Utc>),
 ) -> Result<ArtifactOutcome<Vec<AttendanceArtifact>>, String> {
     let path = format!(
         "/v1.0/users/{}/onlineMeetings/{}/attendanceReports",
         encode_segment(organizer_id),
         encode_segment(meeting_id)
     );
-    let reports = match get_collection(
+    let reports = match cached_collection(
         transport,
+        metadata_cache,
+        (organizer_id.to_string(), meeting_id.to_string()),
         &path,
         "Graph attendance paging",
         MissingOutcome::Unavailable,
@@ -744,8 +815,45 @@ fn fetch_attendance<T: Transport>(
             provider_code: None,
         });
     }
-    let mut artifacts = Vec::with_capacity(reports.len());
-    for report in reports {
+    let report_count = reports.len();
+    let reports = reports
+        .into_iter()
+        .map(|report| {
+            let started = required_timestamp(
+                &report,
+                "meetingStartDateTime",
+                "Graph attendance report has no meeting start instant",
+            )?;
+            let ended = required_timestamp(
+                &report,
+                "meetingEndDateTime",
+                "Graph attendance report has no meeting end instant",
+            )?;
+            if started > ended {
+                return Err("Graph attendance report ends before it starts".into());
+            }
+            Ok((report, started, ended))
+        })
+        .collect::<Result<Vec<_>, String>>()?;
+    let oldest_start = reports.iter().map(|(_, started, _)| *started).min();
+    let matching = reports
+        .into_iter()
+        .filter(|(_, started, ended)| intervals_overlap(occurrence, (*started, *ended)))
+        .collect::<Vec<_>>();
+    if matching.is_empty() {
+        return Ok(ArtifactOutcome::Unavailable {
+            reason: if report_count >= ATTENDANCE_REPORT_RETENTION_LIMIT
+                && oldest_start.is_some_and(|oldest| occurrence.1 <= oldest)
+            {
+                UnavailableReason::NotRetained
+            } else {
+                UnavailableReason::NotProduced
+            },
+            provider_code: None,
+        });
+    }
+    let mut artifacts = Vec::with_capacity(matching.len());
+    for (report, started, ended) in matching {
         let report_id = report
             .get("id")
             .and_then(Value::as_str)
@@ -768,6 +876,8 @@ fn fetch_attendance<T: Transport>(
         };
         artifacts.push(AttendanceArtifact {
             report_id: report_id.into(),
+            meeting_start_date_time: started.to_rfc3339_opts(SecondsFormat::AutoSi, true),
+            meeting_end_date_time: ended.to_rfc3339_opts(SecondsFormat::AutoSi, true),
             records,
         });
     }
@@ -940,6 +1050,53 @@ fn required_string<'a>(value: &'a Value, key: &str, message: &str) -> Result<&'a
         .ok_or_else(|| message.to_string())
 }
 
+fn required_timestamp(value: &Value, key: &str, message: &str) -> Result<DateTime<Utc>, String> {
+    let text = required_string(value, key, message)?;
+    DateTime::parse_from_rfc3339(text)
+        .map(|instant| instant.with_timezone(&Utc))
+        .map_err(|_| message.to_string())
+}
+
+fn event_instant(event: &Value, field: &str) -> Result<DateTime<Utc>, String> {
+    let message = format!("Graph meeting event has no {field} instant");
+    let value = event
+        .get(field)
+        .and_then(Value::as_object)
+        .ok_or_else(|| message.clone())?;
+    let date_time = value
+        .get("dateTime")
+        .and_then(Value::as_str)
+        .filter(|value| !value.is_empty())
+        .ok_or_else(|| message.clone())?;
+    if let Ok(parsed) = DateTime::parse_from_rfc3339(date_time) {
+        return Ok(parsed.with_timezone(&Utc));
+    }
+    if value.get("timeZone").and_then(Value::as_str) == Some("UTC") {
+        return NaiveDateTime::parse_from_str(date_time, "%Y-%m-%dT%H:%M:%S%.f")
+            .map(|instant| instant.and_utc())
+            .map_err(|_| format!("Graph meeting event {field} is not a supported UTC instant"));
+    }
+    Err(format!(
+        "Graph meeting event {field} is not a supported UTC instant"
+    ))
+}
+
+fn event_interval(event: &Value) -> Result<(DateTime<Utc>, DateTime<Utc>), String> {
+    let start = event_instant(event, "start")?;
+    let end = event_instant(event, "end")?;
+    if start >= end {
+        return Err("Graph meeting event must end after it starts".into());
+    }
+    Ok((start, end))
+}
+
+fn intervals_overlap(
+    left: (DateTime<Utc>, DateTime<Utc>),
+    right: (DateTime<Utc>, DateTime<Utc>),
+) -> bool {
+    left.0 < right.1 && right.0 < left.1
+}
+
 fn occurrence_identity(i_cal_uid: &str, start: &str) -> Result<String, String> {
     let normalized_uid = i_cal_uid.trim();
     if normalized_uid.is_empty() {
@@ -955,27 +1112,7 @@ fn occurrence_identity(i_cal_uid: &str, start: &str) -> Result<String, String> {
 
 fn event_occurrence_identity(event: &Value) -> Result<String, String> {
     let i_cal_uid = required_string(event, "iCalUId", "Graph meeting event has no iCalUId")?;
-    let start = event
-        .get("start")
-        .and_then(Value::as_object)
-        .ok_or_else(|| "Graph meeting event has no start instant".to_string())?;
-    let date_time = start
-        .get("dateTime")
-        .and_then(Value::as_str)
-        .filter(|value| !value.is_empty())
-        .ok_or_else(|| "Graph meeting event has no start instant".to_string())?;
-    let canonical = if let Ok(parsed) = DateTime::parse_from_rfc3339(date_time) {
-        parsed
-            .with_timezone(&Utc)
-            .to_rfc3339_opts(SecondsFormat::AutoSi, true)
-    } else if start.get("timeZone").and_then(Value::as_str) == Some("UTC") {
-        NaiveDateTime::parse_from_str(date_time, "%Y-%m-%dT%H:%M:%S%.f")
-            .map_err(|_| "Graph meeting event start is not a supported UTC instant".to_string())?
-            .and_utc()
-            .to_rfc3339_opts(SecondsFormat::AutoSi, true)
-    } else {
-        return Err("Graph meeting event start is not a supported UTC instant".into());
-    };
+    let canonical = event_instant(event, "start")?.to_rfc3339_opts(SecondsFormat::AutoSi, true);
     occurrence_identity(i_cal_uid, &canonical)
 }
 
@@ -1044,6 +1181,7 @@ fn organizer_address(event: &Value) -> Option<String> {
 fn resolve_organizer<T: Transport>(
     transport: &mut T,
     roster: &[RosterMember],
+    observations: &mut ObservationCache,
     event: &Value,
 ) -> Result<Option<Organizer>, String> {
     let Some(address) = organizer_address(event) else {
@@ -1056,20 +1194,31 @@ fn resolve_organizer<T: Transport>(
             id: member.id.clone(),
         }));
     }
+    if let Some(cached) = observations.organizers.get(&address) {
+        return Ok(cached.clone());
+    }
     let path = format!(
         "/v1.0/users/{}?$select=id,displayName,userPrincipalName,mail,accountEnabled,userType",
         encode_segment(&address)
     );
     let user: GraphUser = match get_json(transport, &path, MissingOutcome::NotFound) {
         Ok(user) => user,
-        Err(ObservationError::NotFound(_)) => return Ok(None),
+        Err(ObservationError::NotFound(_)) => {
+            observations.organizers.insert(address, None);
+            return Ok(None);
+        }
         Err(error) => return Err(error.into_failure()),
     };
     if !eligible(&user) {
+        observations.organizers.insert(address, None);
         return Ok(None);
     }
     validate_graph_user(&user)?;
-    Ok(Some(Organizer { id: user.id }))
+    let organizer = Organizer { id: user.id };
+    observations
+        .organizers
+        .insert(address, Some(organizer.clone()));
+    Ok(Some(organizer))
 }
 
 fn resolve_roster<T: Transport>(
@@ -1308,6 +1457,22 @@ fn get_collection<T: Transport>(
             )));
         }
     }
+    Ok(values)
+}
+
+fn cached_collection<T: Transport>(
+    transport: &mut T,
+    cache: &mut BTreeMap<(String, String), Vec<Value>>,
+    key: (String, String),
+    path: &str,
+    context: &str,
+    missing: MissingOutcome,
+) -> Result<Vec<Value>, ObservationError> {
+    if let Some(values) = cache.get(&key) {
+        return Ok(values.clone());
+    }
+    let values = get_collection(transport, path, context, missing)?;
+    cache.insert(key, values.clone());
     Ok(values)
 }
 
@@ -1692,7 +1857,14 @@ mod tests {
             ),
             (
                 "/v1.0/users/user-beta/onlineMeetings/meeting-one/attendanceReports".into(),
-                response(200, json!({ "value": [{ "id": "report-one" }] })),
+                response(
+                    200,
+                    json!({ "value": [{
+                        "id": "report-one",
+                        "meetingStartDateTime": "2026-08-01T10:02:00Z",
+                        "meetingEndDateTime": "2026-08-01T10:58:00Z"
+                    }] }),
+                ),
             ),
             (
                 "/v1.0/users/user-beta/onlineMeetings/meeting-one/attendanceReports/report-one/attendanceRecords".into(),
@@ -1744,6 +1916,258 @@ mod tests {
                 .collect::<BTreeSet<_>>(),
             CALENDAR_FIELDS.split(',').map(str::to_string).collect()
         );
+    }
+
+    #[test]
+    fn duplicate_occurrence_copies_are_emitted_once_even_when_calendar_members_disagree() {
+        let config = selected(&["alpha@example.test", "beta@example.test"]);
+        let alpha = RosterMember {
+            id: "user-alpha".into(),
+            user_principal_name: "alpha@example.test".into(),
+            display_name: Some("Alpha".into()),
+            mail: Some("alpha@example.test".into()),
+        };
+        let beta = RosterMember {
+            id: "user-beta".into(),
+            user_principal_name: "beta@example.test".into(),
+            display_name: Some("Beta".into()),
+            mail: Some("beta@example.test".into()),
+        };
+        let mut alpha_event = offline_meeting_event(&alpha, 0);
+        let mut beta_event = offline_meeting_event(&beta, 0);
+        alpha_event["iCalUId"] = json!("SHARED-OCCURRENCE");
+        beta_event["iCalUId"] = json!("SHARED-OCCURRENCE");
+        let mut transport = ScriptTransport::new(vec![
+            selected_user("alpha@example.test", "user-alpha"),
+            selected_user("beta@example.test", "user-beta"),
+            (
+                calendar_path(&alpha, "2026-08-01T00:00:00Z", "2026-08-02T00:00:00Z"),
+                response(200, json!({ "value": [alpha_event] })),
+            ),
+            (
+                calendar_path(&beta, "2026-08-01T00:00:00Z", "2026-08-02T00:00:00Z"),
+                response(200, json!({ "value": [beta_event] })),
+            ),
+        ]);
+        let mut emitted = Vec::new();
+        let batch = fetch_meeting_batch(
+            &mut transport,
+            &config,
+            "2026-08-01T00:00:00Z",
+            "2026-08-02T00:00:00Z",
+            None,
+            |meeting| {
+                emitted.push(meeting);
+                Ok(())
+            },
+        )
+        .unwrap();
+        assert!(transport.exhausted());
+        assert_eq!(batch.item_count, 1);
+        assert_eq!(emitted.len(), 1);
+        assert_eq!(emitted[0].observed_by_member_id, "user-alpha");
+    }
+
+    #[test]
+    fn artifacts_are_selected_by_occurrence_before_material_is_downloaded() {
+        let occurrence = (
+            DateTime::parse_from_rfc3339("2026-08-01T10:00:00Z")
+                .unwrap()
+                .with_timezone(&Utc),
+            DateTime::parse_from_rfc3339("2026-08-01T11:00:00Z")
+                .unwrap()
+                .with_timezone(&Utc),
+        );
+        let mut attendance = ScriptTransport::new(vec![
+            (
+                "/v1.0/users/organizer/onlineMeetings/meeting/attendanceReports".into(),
+                response(
+                    200,
+                    json!({ "value": [
+                        {
+                            "id": "older",
+                            "meetingStartDateTime": "2026-07-25T10:00:00Z",
+                            "meetingEndDateTime": "2026-07-25T11:00:00Z"
+                        },
+                        {
+                            "id": "matching",
+                            "meetingStartDateTime": "2026-08-01T09:58:00Z",
+                            "meetingEndDateTime": "2026-08-01T11:03:00Z"
+                        }
+                    ] }),
+                ),
+            ),
+            (
+                "/v1.0/users/organizer/onlineMeetings/meeting/attendanceReports/matching/attendanceRecords".into(),
+                response(200, json!({ "value": [] })),
+            ),
+        ]);
+        let attendance = fetch_attendance(
+            &mut attendance,
+            &mut BTreeMap::new(),
+            "organizer",
+            "meeting",
+            occurrence,
+        )
+        .unwrap();
+        assert!(matches!(
+            attendance,
+            ArtifactOutcome::Observed { material }
+                if material.len() == 1
+                    && material[0].report_id == "matching"
+                    && material[0].meeting_start_date_time == "2026-08-01T09:58:00Z"
+                    && material[0].records.is_empty()
+        ));
+
+        let mut transcript = ScriptTransport::new(vec![
+            (
+                "/v1.0/users/organizer/onlineMeetings/meeting/transcripts".into(),
+                response(
+                    200,
+                    json!({ "value": [
+                        {
+                            "id": "older",
+                            "createdDateTime": "2026-07-25T10:00:00Z",
+                            "endDateTime": "2026-07-25T11:00:00Z"
+                        },
+                        {
+                            "id": "matching",
+                            "createdDateTime": "2026-08-01T10:01:00Z",
+                            "endDateTime": "2026-08-01T10:59:00Z"
+                        }
+                    ] }),
+                ),
+            ),
+            (
+                "/v1.0/users/organizer/onlineMeetings/meeting/transcripts/matching/content".into(),
+                Response {
+                    status: 200,
+                    headers: BTreeMap::from([("content-type".into(), "text/vtt".into())]),
+                    body: b"WEBVTT\n".to_vec(),
+                },
+            ),
+        ]);
+        let transcript = fetch_transcripts(
+            &mut transcript,
+            &mut BTreeMap::new(),
+            "organizer",
+            "meeting",
+            occurrence,
+        )
+        .unwrap();
+        assert!(matches!(
+            transcript,
+            ArtifactOutcome::Observed { material }
+                if material.len() == 1
+                    && material[0].id == "matching"
+                    && material[0].created_date_time == "2026-08-01T10:01:00Z"
+                    && material[0].end_date_time == "2026-08-01T10:59:00Z"
+        ));
+    }
+
+    #[test]
+    fn attendance_before_a_full_provider_window_is_reported_not_retained() {
+        let occurrence = (
+            DateTime::parse_from_rfc3339("2026-06-01T10:00:00Z")
+                .unwrap()
+                .with_timezone(&Utc),
+            DateTime::parse_from_rfc3339("2026-06-01T11:00:00Z")
+                .unwrap()
+                .with_timezone(&Utc),
+        );
+        let reports = (1..=ATTENDANCE_REPORT_RETENTION_LIMIT)
+            .map(|day| {
+                json!({
+                    "id": format!("report-{day}"),
+                    "meetingStartDateTime": "2026-07-01T10:00:00Z",
+                    "meetingEndDateTime": "2026-07-01T11:00:00Z"
+                })
+            })
+            .collect::<Vec<_>>();
+        let mut transport = ScriptTransport::new(vec![(
+            "/v1.0/users/organizer/onlineMeetings/meeting/attendanceReports".into(),
+            response(200, json!({ "value": reports })),
+        )]);
+
+        let attendance = fetch_attendance(
+            &mut transport,
+            &mut BTreeMap::new(),
+            "organizer",
+            "meeting",
+            occurrence,
+        )
+        .unwrap();
+
+        assert!(transport.exhausted());
+        assert!(matches!(
+            attendance,
+            ArtifactOutcome::Unavailable {
+                reason: UnavailableReason::NotRetained,
+                provider_code: None
+            }
+        ));
+    }
+
+    #[test]
+    fn recurring_occurrences_reuse_provider_metadata_without_reusing_material() {
+        let first = (
+            DateTime::parse_from_rfc3339("2026-08-01T10:00:00Z")
+                .unwrap()
+                .with_timezone(&Utc),
+            DateTime::parse_from_rfc3339("2026-08-01T11:00:00Z")
+                .unwrap()
+                .with_timezone(&Utc),
+        );
+        let second = (
+            DateTime::parse_from_rfc3339("2026-08-08T10:00:00Z")
+                .unwrap()
+                .with_timezone(&Utc),
+            DateTime::parse_from_rfc3339("2026-08-08T11:00:00Z")
+                .unwrap()
+                .with_timezone(&Utc),
+        );
+        let mut transport = ScriptTransport::new(vec![
+            (
+                "/v1.0/users/organizer/onlineMeetings/meeting/attendanceReports".into(),
+                response(
+                    200,
+                    json!({ "value": [
+                        {
+                            "id": "first",
+                            "meetingStartDateTime": "2026-08-01T10:00:00Z",
+                            "meetingEndDateTime": "2026-08-01T11:00:00Z"
+                        },
+                        {
+                            "id": "second",
+                            "meetingStartDateTime": "2026-08-08T10:00:00Z",
+                            "meetingEndDateTime": "2026-08-08T11:00:00Z"
+                        }
+                    ] }),
+                ),
+            ),
+            (
+                "/v1.0/users/organizer/onlineMeetings/meeting/attendanceReports/first/attendanceRecords".into(),
+                response(200, json!({ "value": [] })),
+            ),
+            (
+                "/v1.0/users/organizer/onlineMeetings/meeting/attendanceReports/second/attendanceRecords".into(),
+                response(200, json!({ "value": [] })),
+            ),
+        ]);
+        let mut cache = BTreeMap::new();
+        let first =
+            fetch_attendance(&mut transport, &mut cache, "organizer", "meeting", first).unwrap();
+        let second =
+            fetch_attendance(&mut transport, &mut cache, "organizer", "meeting", second).unwrap();
+        assert!(transport.exhausted());
+        assert!(matches!(
+            first,
+            ArtifactOutcome::Observed { material } if material[0].report_id == "first"
+        ));
+        assert!(matches!(
+            second,
+            ArtifactOutcome::Observed { material } if material[0].report_id == "second"
+        ));
     }
 
     #[test]

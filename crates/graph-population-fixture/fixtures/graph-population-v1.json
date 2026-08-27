@@ -1,5 +1,5 @@
 {
-  "fixtureVersion": 2,
+  "fixtureVersion": 3,
   "scenarios": [
     {
       "id": "bounded-calendar-page",
@@ -8,7 +8,7 @@
         {
           "request": {
             "method": "GET",
-            "path": "/v1.0/users/user-attendee/calendarView?startDateTime=2026-08-01T00:00:00Z&endDateTime=2026-08-02T00:00:00Z&$select=iCalUId,subject,start,end,organizer,attendees,isOnlineMeeting,onlineMeeting,isCancelled,categories,type,seriesMasterId,responseStatus&$top=25"
+            "path": "/v1.0/users/user-attendee/calendarView?startDateTime=2026-08-01T00:00:00Z&endDateTime=2026-08-02T00:00:00Z&$select=iCalUId,subject,start,end,organizer,attendees,isOnlineMeeting,onlineMeeting,isCancelled,categories,type,seriesMasterId,responseStatus&$top=500"
           },
           "response": {
             "status": 200,
@@ -80,6 +80,71 @@
           "response": {
             "status": 200,
             "body": { "value": [] }
+          }
+        }
+      ]
+    },
+    {
+      "id": "occurrence-scoped-artifacts",
+      "proves": ["occurrence-artifact-join"],
+      "exchanges": [
+        {
+          "request": {
+            "method": "GET",
+            "path": "/v1.0/users/user-organizer/onlineMeetings/meeting-one/attendanceReports"
+          },
+          "response": {
+            "status": 200,
+            "body": {
+              "value": [
+                {
+                  "id": "report-older",
+                  "meetingStartDateTime": "2026-07-25T10:00:00Z",
+                  "meetingEndDateTime": "2026-07-25T11:00:00Z"
+                },
+                {
+                  "id": "report-occurrence",
+                  "meetingStartDateTime": "2026-08-01T10:00:00Z",
+                  "meetingEndDateTime": "2026-08-01T11:00:00Z"
+                }
+              ]
+            }
+          }
+        },
+        {
+          "request": {
+            "method": "GET",
+            "path": "/v1.0/users/user-organizer/onlineMeetings/meeting-one/attendanceReports/report-occurrence/attendanceRecords"
+          },
+          "response": {
+            "status": 200,
+            "body": { "value": [] }
+          }
+        },
+        {
+          "request": {
+            "method": "GET",
+            "path": "/v1.0/users/user-organizer/onlineMeetings/meeting-one/transcripts"
+          },
+          "response": {
+            "status": 200,
+            "body": {
+              "value": [{
+                "id": "transcript-occurrence",
+                "createdDateTime": "2026-08-01T10:01:00Z",
+                "endDateTime": "2026-08-01T10:59:00Z"
+              }]
+            }
+          }
+        },
+        {
+          "request": {
+            "method": "GET",
+            "path": "/v1.0/users/user-organizer/onlineMeetings/meeting-one/transcripts/transcript-occurrence/content"
+          },
+          "response": {
+            "status": 200,
+            "body": "WEBVTT\n"
           }
         }
       ]
