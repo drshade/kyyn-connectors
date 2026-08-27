@@ -75,6 +75,13 @@ interface http {
     /// Buffered request/response for API traffic.
     fetch: func(request: request) -> result<response, http-error>;
 
+    /// Bounded concurrent buffered traffic. The host refuses the complete
+    /// group before dispatch when it is empty, has more than eight requests,
+    /// exceeds the aggregate response allowance, or contains any request
+    /// outside its consented grant. Once dispatched, results retain request
+    /// order and each request reports its own transport outcome.
+    fetch-many: func(requests: list<request>) -> result<list<result<response, http-error>>, http-error>;
+
     /// Download a response body straight into an evidence file without the
     /// bytes crossing the guest boundary. The URL-to-file lineage is
     /// host-attested. `path` is an out-dir-relative evidence path.

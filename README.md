@@ -77,12 +77,15 @@ workload credential or token to durable Connection state.
 
 `graph-org-meetings` is the single workload-only population consumer. It
 observes either every enabled organization member or one explicit non-empty set
-emitted by its zero-network configurator. Each bounded invocation reads one
-calendar page, emits joined occurrence evidence, and checkpoints the next page
-or member; Kyyn activates the accumulated attempt only when the final batch is
-complete. The calendar request selects only the thirteen fields accepted by ADR
-0037, and duplicate invitation copies are assigned to one deterministic
-population observer by normalized `iCalUId` plus start instant.
+emitted by its zero-network configurator. Each bounded invocation reads coarse
+`$top=500` calendar pages for up to eight members through one host-mediated
+concurrent operation, emits joined occurrence evidence, and checkpoints only
+the remaining pages or members; Kyyn activates the accumulated attempt only
+when the final batch is complete. A member whose mailbox does not expose the
+calendar API becomes explicit bounded member-unavailable evidence rather than
+aborting the population. The calendar request selects only the thirteen fields
+accepted by ADR 0037, and duplicate invitation copies are assigned to one
+deterministic population observer by normalized `iCalUId` plus start instant.
 
 Meeting metadata, transcripts and attendance are always addressed through the
 calendar organizer's canonical provider identity, never an attendee whose
