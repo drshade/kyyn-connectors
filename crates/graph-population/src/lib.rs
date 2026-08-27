@@ -21,6 +21,10 @@ const CALENDAR_BATCH_WIDTH: usize = 8;
 // provider calls and guest execution without turning one wave into one batch.
 const MAX_BATCH_ITEMS: usize = 4_095;
 const MAX_CALENDAR_WAVES: usize = 32;
+// Graph retains at most the 50 most recent attendance reports for a recurring
+// meeting series. A full returned window can therefore distinguish aged-out
+// evidence from a report that was never produced.
+const ATTENDANCE_REPORT_RETENTION_LIMIT: usize = 50;
 const CALENDAR_FIELDS: &str = "iCalUId,subject,start,end,organizer,attendees,isOnlineMeeting,onlineMeeting,isCancelled,categories,type,seriesMasterId,responseStatus";
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -838,7 +842,7 @@ fn fetch_attendance<T: Transport>(
         .collect::<Vec<_>>();
     if matching.is_empty() {
         return Ok(ArtifactOutcome::Unavailable {
-            reason: if report_count == 50
+            reason: if report_count >= ATTENDANCE_REPORT_RETENTION_LIMIT
                 && oldest_start.is_some_and(|oldest| occurrence.1 <= oldest)
             {
                 UnavailableReason::NotRetained
@@ -2071,7 +2075,7 @@ mod tests {
                 .unwrap()
                 .with_timezone(&Utc),
         );
-        let reports = (1..=50)
+        let reports = (1..=ATTENDANCE_REPORT_RETENTION_LIMIT)
             .map(|day| {
                 json!({
                     "id": format!("report-{day}"),
