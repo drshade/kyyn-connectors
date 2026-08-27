@@ -1632,6 +1632,27 @@ mod tests {
         })
     }
 
+    fn offline_meeting_event(member: &RosterMember, index: usize) -> Value {
+        json!({
+            "id": format!("event-{}-{index}", member.id),
+            "iCalUId": format!("SYNTHETIC-{}-{index}", member.id),
+            "subject": "Synthetic scale observation",
+            "start": { "dateTime": "2026-08-01T10:00:00Z", "timeZone": "UTC" },
+            "end": { "dateTime": "2026-08-01T11:00:00Z", "timeZone": "UTC" },
+            "organizer": {
+                "emailAddress": { "address": member.user_principal_name }
+            },
+            "attendees": [],
+            "isOnlineMeeting": false,
+            "onlineMeeting": null,
+            "isCancelled": false,
+            "categories": [],
+            "type": "singleInstance",
+            "seriesMasterId": null,
+            "responseStatus": { "response": "accepted" }
+        })
+    }
+
     #[test]
     fn batches_member_calendars_concurrently_and_deduplicates_under_the_organizer_route() {
         let config = selected(&["alpha@example.test", "beta@example.test"]);
@@ -1865,6 +1886,112 @@ mod tests {
         assert_eq!(second.concurrent.len(), 1);
         assert_eq!(second.concurrent[0].len(), 1);
         assert_eq!(second_batch.completion, BatchCompletion::Complete);
+    }
+
+    #[test]
+    fn thousands_of_meetings_resume_across_the_item_bound_without_reemission() {
+        let users = (0..257)
+            .map(|index| format!("member-{index}@example.test"))
+            .collect::<Vec<_>>();
+        let user_refs = users.iter().map(String::as_str).collect::<Vec<_>>();
+        let config = selected(&user_refs);
+        let mut members = users
+            .iter()
+            .enumerate()
+            .map(|(index, upn)| RosterMember {
+                id: format!("user-{index}"),
+                user_principal_name: upn.clone(),
+                display_name: Some(upn.clone()),
+                mail: Some(upn.clone()),
+            })
+            .collect::<Vec<_>>();
+        members.sort_by(|left, right| {
+            left.user_principal_name
+                .cmp(&right.user_principal_name)
+                .then_with(|| left.id.cmp(&right.id))
+        });
+        let roster_exchanges = || {
+            users
+                .iter()
+                .enumerate()
+                .map(|(index, upn)| selected_user(upn, &format!("user-{index}")))
+                .collect::<Vec<_>>()
+        };
+
+        let mut first_exchanges = roster_exchanges();
+        let mut aggregate_calendar_bytes = 0usize;
+        for member in &members[..CALENDAR_BATCH_WIDTH] {
+            let events = (0..CALENDAR_PAGE_SIZE)
+                .map(|index| offline_meeting_event(member, index))
+                .collect::<Vec<_>>();
+            let calendar_response = response(200, json!({ "value": events }));
+            aggregate_calendar_bytes += calendar_response.body.len();
+            first_exchanges.push((
+                calendar_path(member, "2026-08-01T00:00:00Z", "2026-08-02T00:00:00Z"),
+                calendar_response,
+            ));
+        }
+        assert!(aggregate_calendar_bytes < 64 * 1024 * 1024);
+
+        let mut emitted = BTreeSet::new();
+        let mut maximum_item_bytes = 0usize;
+        let mut first = ScriptTransport::new(first_exchanges);
+        let first_batch = fetch_meeting_batch(
+            &mut first,
+            &config,
+            "2026-08-01T00:00:00Z",
+            "2026-08-02T00:00:00Z",
+            None,
+            |meeting| {
+                maximum_item_bytes = maximum_item_bytes.max(
+                    serde_json::to_vec(&meeting)
+                        .map_err(|_| "could not measure synthetic meeting".to_string())?
+                        .len(),
+                );
+                if !emitted.insert(meeting.id) {
+                    return Err("synthetic meeting was emitted twice".into());
+                }
+                Ok(())
+            },
+        )
+        .unwrap();
+        assert!(first.exhausted());
+        assert_eq!(first.concurrent.len(), 1);
+        assert_eq!(first.concurrent[0].len(), CALENDAR_BATCH_WIDTH);
+        assert_eq!(first_batch.item_count, 4_000);
+        assert_eq!(emitted.len(), 4_000);
+        assert!(maximum_item_bytes < 4 * 1024);
+        let BatchCompletion::Pending { checkpoint } = first_batch.completion else {
+            panic!("the item/file reservation must checkpoint before another page");
+        };
+
+        let mut second_exchanges = roster_exchanges();
+        second_exchanges.extend(members[CALENDAR_BATCH_WIDTH..].iter().map(|member| {
+            (
+                calendar_path(member, "2026-08-01T00:00:00Z", "2026-08-02T00:00:00Z"),
+                response(200, json!({ "value": [] })),
+            )
+        }));
+        let mut second = ScriptTransport::new(second_exchanges);
+        let second_batch = fetch_meeting_batch(
+            &mut second,
+            &config,
+            "2026-08-01T00:00:00Z",
+            "2026-08-02T00:00:00Z",
+            Some(&checkpoint),
+            |meeting| {
+                if !emitted.insert(meeting.id) {
+                    return Err("resumed population re-emitted an earlier meeting".into());
+                }
+                Ok(())
+            },
+        )
+        .unwrap();
+        assert!(second.exhausted());
+        assert_eq!(second.concurrent.len(), MAX_CALENDAR_WAVES);
+        assert_eq!(second_batch.item_count, 0);
+        assert_eq!(second_batch.completion, BatchCompletion::Complete);
+        assert_eq!(emitted.len(), 4_000);
     }
 
     #[test]
