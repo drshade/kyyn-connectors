@@ -323,6 +323,7 @@ struct BatchCheckpoint {
     version: u8,
     next_member_index: usize,
     pending: Vec<MemberCursor>,
+    external_occurrences: BTreeSet<String>,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -423,7 +424,7 @@ pub fn fetch_meeting_batch<T: Transport, F: FnMut(PopulationMeeting) -> Result<(
     validate_batch_checkpoint(&cursor, &roster)?;
     let mut item_count = 0usize;
     let mut unavailable_members = Vec::new();
-    let mut emitted_occurrences = BTreeSet::new();
+    let mut emitted_occurrences = cursor.external_occurrences.clone();
     let mut observations = ObservationCache::default();
     let mut waves = 0usize;
     loop {
@@ -480,15 +481,19 @@ pub fn fetch_meeting_batch<T: Transport, F: FnMut(PopulationMeeting) -> Result<(
                     continue;
                 }
                 let id = event_occurrence_identity(&event)?;
+                let external_organizer = organizer_member(&event, &roster).is_none();
                 let provider_id =
                     required_string(&event, "id", "Graph meeting event has no identity")?;
-                events.push((id, provider_id.to_string(), event));
+                events.push((id, provider_id.to_string(), external_organizer, event));
             }
             events.sort_by(|left, right| left.0.cmp(&right.0).then_with(|| left.1.cmp(&right.1)));
             events.dedup_by(|left, right| left.0 == right.0);
-            for (expected_id, _, event) in events {
+            for (expected_id, _, external_organizer, event) in events {
                 if !emitted_occurrences.insert(expected_id.clone()) {
                     continue;
+                }
+                if external_organizer {
+                    cursor.external_occurrences.insert(expected_id.clone());
                 }
                 item_count = item_count
                     .checked_add(1)
@@ -992,14 +997,15 @@ fn member_unavailable(
 fn parse_batch_checkpoint(checkpoint: Option<&str>) -> Result<BatchCheckpoint, String> {
     let Some(checkpoint) = checkpoint else {
         return Ok(BatchCheckpoint {
-            version: 2,
+            version: 3,
             next_member_index: 0,
             pending: Vec::new(),
+            external_occurrences: BTreeSet::new(),
         });
     };
     let parsed: BatchCheckpoint = serde_json::from_str(checkpoint)
         .map_err(|_| "meeting batch checkpoint is invalid".to_string())?;
-    if parsed.version != 2 {
+    if parsed.version != 3 {
         return Err("meeting batch checkpoint has an unsupported version".into());
     }
     Ok(parsed)
@@ -1016,6 +1022,16 @@ fn validate_batch_checkpoint(
 ) -> Result<(), String> {
     if checkpoint.next_member_index > roster.len()
         || checkpoint.pending.len() > CALENDAR_BATCH_WIDTH
+        || checkpoint.external_occurrences.iter().any(|identity| {
+            identity
+                .strip_prefix("occurrence:v1:")
+                .is_none_or(|digest| {
+                    digest.len() != 64
+                        || !digest
+                            .bytes()
+                            .all(|byte| byte.is_ascii_hexdigit() && !byte.is_ascii_uppercase())
+                })
+        })
     {
         return Err("meeting batch checkpoint is outside the resolved population".into());
     }
@@ -1156,6 +1172,9 @@ fn member_matches(member: &RosterMember, addresses: &BTreeSet<String>) -> bool {
 }
 
 fn is_canonical_observer(event: &Value, member: &RosterMember, roster: &[RosterMember]) -> bool {
+    if let Some(organizer) = organizer_member(event, roster) {
+        return organizer.id == member.id;
+    }
     let addresses = event_addresses(event);
     roster
         .iter()
@@ -1166,6 +1185,13 @@ fn is_canonical_observer(event: &Value, member: &RosterMember, roster: &[RosterM
                 .then_with(|| left.id.cmp(&right.id))
         })
         .is_none_or(|candidate| candidate.id == member.id)
+}
+
+fn organizer_member<'a>(event: &Value, roster: &'a [RosterMember]) -> Option<&'a RosterMember> {
+    let address = organizer_address(event)?;
+    roster.iter().find(|member| {
+        member.user_principal_name == address || member.mail.as_deref() == Some(address.as_str())
+    })
 }
 
 fn organizer_address(event: &Value) -> Option<String> {
@@ -1893,7 +1919,7 @@ mod tests {
         assert!(batch.unavailable_members.is_empty());
         assert_eq!(batch.completion, BatchCompletion::Complete);
         let meeting = &emitted[0];
-        assert_eq!(meeting.observed_by_member_id, "user-alpha");
+        assert_eq!(meeting.observed_by_member_id, "user-beta");
         assert!(matches!(
             meeting.transcript,
             ArtifactOutcome::Unavailable {
@@ -2313,6 +2339,116 @@ mod tests {
     }
 
     #[test]
+    fn external_organizer_copies_do_not_cross_pending_batch_boundaries() {
+        let users = (0..257)
+            .map(|index| format!("member-{index:03}@example.test"))
+            .collect::<Vec<_>>();
+        let user_refs = users.iter().map(String::as_str).collect::<Vec<_>>();
+        let config = selected(&user_refs);
+        let members = users
+            .iter()
+            .enumerate()
+            .map(|(index, upn)| RosterMember {
+                id: format!("user-{index:03}"),
+                user_principal_name: upn.clone(),
+                display_name: Some(upn.clone()),
+                mail: Some(upn.clone()),
+            })
+            .collect::<Vec<_>>();
+        let roster_exchanges = || {
+            users
+                .iter()
+                .enumerate()
+                .map(|(index, upn)| selected_user(upn, &format!("user-{index:03}")))
+                .collect::<Vec<_>>()
+        };
+        let event = |provider_id: &str, attendees: &[&RosterMember]| {
+            let mut event = offline_meeting_event(&members[0], 0);
+            event["id"] = json!(provider_id);
+            event["iCalUId"] = json!("SHARED-EXTERNAL-OCCURRENCE");
+            event["organizer"] = json!({
+                "emailAddress": { "address": "external@example.test" }
+            });
+            event["attendees"] = Value::Array(
+                attendees
+                    .iter()
+                    .map(|member| {
+                        json!({
+                            "emailAddress": {
+                                "address": member.user_principal_name
+                            }
+                        })
+                    })
+                    .collect(),
+            );
+            event
+        };
+
+        let first_event = event("first-copy", &[&members[0], &members[256]]);
+        let mut first_exchanges = roster_exchanges();
+        for members_wave in members[..256].chunks(CALENDAR_BATCH_WIDTH) {
+            first_exchanges.extend(members_wave.iter().map(|member| {
+                let values = if member.id == members[0].id {
+                    vec![first_event.clone()]
+                } else {
+                    Vec::new()
+                };
+                (
+                    calendar_path(member, "2026-08-01T00:00:00Z", "2026-08-02T00:00:00Z"),
+                    response(200, json!({ "value": values })),
+                )
+            }));
+        }
+        let mut emitted = BTreeSet::new();
+        let mut first = ScriptTransport::new(first_exchanges);
+        let first_batch = fetch_meeting_batch(
+            &mut first,
+            &config,
+            "2026-08-01T00:00:00Z",
+            "2026-08-02T00:00:00Z",
+            None,
+            |meeting| {
+                assert!(emitted.insert(meeting.id));
+                Ok(())
+            },
+        )
+        .unwrap();
+        assert!(first.exhausted());
+        assert_eq!(first_batch.item_count, 1);
+        let BatchCompletion::Pending { checkpoint } = first_batch.completion else {
+            panic!("the last member must remain checkpointed");
+        };
+
+        let second_event = event("second-copy", &[&members[256]]);
+        let mut second_exchanges = roster_exchanges();
+        second_exchanges.push((
+            calendar_path(
+                &members[256],
+                "2026-08-01T00:00:00Z",
+                "2026-08-02T00:00:00Z",
+            ),
+            response(200, json!({ "value": [second_event] })),
+        ));
+        let mut second = ScriptTransport::new(second_exchanges);
+        let second_batch = fetch_meeting_batch(
+            &mut second,
+            &config,
+            "2026-08-01T00:00:00Z",
+            "2026-08-02T00:00:00Z",
+            Some(&checkpoint),
+            |meeting| {
+                assert!(emitted.insert(meeting.id));
+                Ok(())
+            },
+        )
+        .unwrap();
+        assert!(second.exhausted());
+        assert_eq!(second_batch.item_count, 0);
+        assert_eq!(second_batch.completion, BatchCompletion::Complete);
+        assert_eq!(emitted.len(), 1);
+    }
+
+    #[test]
     fn thousands_of_meetings_resume_across_the_item_bound_without_reemission() {
         let users = (0..257)
             .map(|index| format!("member-{index}@example.test"))
@@ -2552,12 +2688,13 @@ mod tests {
     fn checkpoint_cannot_retarget_a_different_population_member() {
         let config = selected(&["alpha@example.test"]);
         let checkpoint = serde_json::to_string(&BatchCheckpoint {
-            version: 2,
+            version: 3,
             next_member_index: 1,
             pending: vec![MemberCursor {
                 member_index: 0,
                 page_path: "/v1.0/users/another/calendarView?$skiptoken=escape".into(),
             }],
+            external_occurrences: BTreeSet::new(),
         })
         .unwrap();
         let mut transport =
