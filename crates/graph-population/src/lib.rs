@@ -1716,6 +1716,14 @@ mod tests {
     use serde_json::json;
     use std::collections::VecDeque;
 
+    #[test]
+    fn calendar_selection_matches_the_independent_fixture_contract() {
+        assert_eq!(
+            CALENDAR_FIELDS,
+            graph_population_fixture::EXACT_CALENDAR_SELECTION
+        );
+    }
+
     struct ScriptTransport {
         exchanges: VecDeque<(String, Response)>,
         requested: Vec<String>,

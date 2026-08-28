@@ -83,9 +83,9 @@ concurrent operation, emits joined occurrence evidence, and checkpoints only
 the remaining pages or members; Kyyn activates the accumulated attempt only
 when the final batch is complete. A member whose mailbox does not expose the
 calendar API becomes explicit bounded member-unavailable evidence rather than
-aborting the population. The calendar request selects only the fourteen fields
-accepted by ADR 0037, including mailbox-relative `isOrganizer` so conflicting
-calendar copies route through the provider-designated organizer; duplicate
+aborting the population. The calendar request selects only the fields the
+product consumes; the exact set is `CALENDAR_FIELDS`, including mailbox-relative
+`isOrganizer` so conflicting calendar copies route through the provider-designated organizer; duplicate
 invitation copies are assigned to one deterministic population observer by
 normalized `iCalUId` plus start instant.
 

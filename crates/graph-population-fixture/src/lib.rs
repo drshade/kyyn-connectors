@@ -7,6 +7,8 @@ use serde_json::Value;
 
 const FIXTURE: &str = include_str!("../fixtures/graph-population-v1.json");
 
+pub const EXACT_CALENDAR_SELECTION: &str = "iCalUId,subject,start,end,organizer,isOrganizer,attendees,isOnlineMeeting,onlineMeeting,isCancelled,categories,type,seriesMasterId,responseStatus";
+
 #[derive(Clone, Debug, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct Suite {
@@ -73,8 +75,6 @@ pub fn suite() -> Suite {
 mod tests {
     use super::*;
     use std::collections::BTreeSet;
-
-    const EXACT_CALENDAR_SELECTION: &str = "iCalUId,subject,start,end,organizer,isOrganizer,attendees,isOnlineMeeting,onlineMeeting,isCancelled,categories,type,seriesMasterId,responseStatus";
 
     #[test]
     fn corpus_is_closed_synthetic_and_covers_the_amended_boundary() {
