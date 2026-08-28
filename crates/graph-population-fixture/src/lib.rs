@@ -74,6 +74,8 @@ mod tests {
     use super::*;
     use std::collections::BTreeSet;
 
+    const EXACT_CALENDAR_SELECTION: &str = "iCalUId,subject,start,end,organizer,isOrganizer,attendees,isOnlineMeeting,onlineMeeting,isCancelled,categories,type,seriesMasterId,responseStatus";
+
     #[test]
     fn corpus_is_closed_synthetic_and_covers_the_amended_boundary() {
         let suite = suite();
@@ -110,6 +112,30 @@ mod tests {
                 Proof::ClosedArtifactOutcome,
             ])
         );
+    }
+
+    #[test]
+    fn exact_calendar_selection_proof_pins_the_complete_field_set() {
+        let suite = suite();
+        let proving = suite
+            .scenarios
+            .iter()
+            .filter(|scenario| scenario.proves.contains(&Proof::ExactCalendarSelection))
+            .collect::<Vec<_>>();
+        assert_eq!(proving.len(), 1);
+        let calendar_requests = proving[0]
+            .exchanges
+            .iter()
+            .filter(|exchange| exchange.request.path.contains("/calendarView?"))
+            .collect::<Vec<_>>();
+        assert_eq!(calendar_requests.len(), 1);
+        let selection = calendar_requests[0]
+            .request
+            .path
+            .split_once("$select=")
+            .and_then(|(_, suffix)| suffix.split('&').next())
+            .expect("exact-selection proof carries one $select query");
+        assert_eq!(selection, EXACT_CALENDAR_SELECTION);
     }
 
     #[test]
