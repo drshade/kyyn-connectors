@@ -481,30 +481,23 @@ pub fn fetch_meeting_batch<T: Transport, F: FnMut(PopulationMeeting) -> Result<(
                 if !is_canonical_observer(&event, member, &roster) {
                     continue;
                 }
-                let id = event_occurrence_identity(&event, member)?;
-                let occurrence_key = event_occurrence_key(&event)?;
+                let id = event_occurrence_identity(&event, member, &roster)?;
                 let external_organizer = organizer_member(&event, &roster).is_none();
                 let provider_id =
                     required_string(&event, "id", "Graph meeting event has no identity")?;
-                events.push((
-                    id,
-                    occurrence_key,
-                    provider_id.to_string(),
-                    external_organizer,
-                    event,
-                ));
+                events.push((id, provider_id.to_string(), external_organizer, event));
             }
-            events.sort_by(|left, right| left.0.cmp(&right.0).then_with(|| left.2.cmp(&right.2)));
+            events.sort_by(|left, right| left.0.cmp(&right.0).then_with(|| left.1.cmp(&right.1)));
             events.dedup_by(|left, right| left.0 == right.0);
-            for (expected_id, occurrence_key, _, external_organizer, event) in events {
+            for (expected_id, _, external_organizer, event) in events {
                 if !emitted_items.insert(expected_id.clone()) {
                     continue;
                 }
                 if external_organizer {
-                    if !external_occurrences.insert(occurrence_key.clone()) {
+                    if !external_occurrences.insert(expected_id.clone()) {
                         continue;
                     }
-                    cursor.external_occurrences.insert(occurrence_key);
+                    cursor.external_occurrences.insert(expected_id.clone());
                 }
                 item_count = item_count
                     .checked_add(1)
@@ -550,7 +543,7 @@ fn observe_meeting<T: Transport>(
     event: Value,
 ) -> Result<PopulationMeeting, String> {
     let provider_event_id = required_string(&event, "id", "Graph meeting event has no identity")?;
-    let id = event_occurrence_identity(&event, member)?;
+    let id = event_occurrence_identity(&event, member, roster)?;
     let calendar_event = project_calendar_event(&event);
     let Some(join_url) = event
         .get("onlineMeeting")
@@ -1035,7 +1028,7 @@ fn validate_batch_checkpoint(
         || checkpoint.pending.len() > CALENDAR_BATCH_WIDTH
         || checkpoint.external_occurrences.iter().any(|identity| {
             identity
-                .strip_prefix("occurrence:v1:")
+                .strip_prefix("occurrence:v2:")
                 .is_none_or(|digest| {
                     digest.len() != 64
                         || !digest
@@ -1124,27 +1117,14 @@ fn intervals_overlap(
     left.0 < right.1 && right.0 < left.1
 }
 
-fn occurrence_key(i_cal_uid: &str, start: &str) -> Result<String, String> {
-    let normalized_uid = i_cal_uid.trim();
-    if normalized_uid.is_empty() {
-        return Err("Graph meeting event has an empty normalized iCalUId".into());
-    }
-    let start = DateTime::parse_from_rfc3339(start)
-        .map_err(|_| "Graph meeting event start is not RFC3339".to_string())?
-        .with_timezone(&Utc)
-        .to_rfc3339_opts(SecondsFormat::AutoSi, true);
-    let digest = Sha256::digest(format!("{normalized_uid}\0{start}").as_bytes());
-    Ok(format!("occurrence:v1:{digest:x}"))
-}
-
 fn occurrence_identity(
-    observer_member_id: &str,
+    organizer_qualifier: &str,
     i_cal_uid: &str,
     start: &str,
 ) -> Result<String, String> {
-    let normalized_observer = observer_member_id.trim();
-    if normalized_observer.is_empty() {
-        return Err("Graph meeting observer has an empty normalized identity".into());
+    let normalized_organizer = organizer_qualifier.trim();
+    if normalized_organizer.is_empty() {
+        return Err("Graph meeting organizer has an empty normalized identity".into());
     }
     let normalized_uid = i_cal_uid.trim();
     if normalized_uid.is_empty() {
@@ -1155,20 +1135,27 @@ fn occurrence_identity(
         .with_timezone(&Utc)
         .to_rfc3339_opts(SecondsFormat::AutoSi, true);
     let digest =
-        Sha256::digest(format!("{normalized_observer}\0{normalized_uid}\0{start}").as_bytes());
+        Sha256::digest(format!("{normalized_organizer}\0{normalized_uid}\0{start}").as_bytes());
     Ok(format!("occurrence:v2:{digest:x}"))
 }
 
-fn event_occurrence_identity(event: &Value, observer: &RosterMember) -> Result<String, String> {
+fn event_occurrence_identity(
+    event: &Value,
+    observer: &RosterMember,
+    roster: &[RosterMember],
+) -> Result<String, String> {
     let i_cal_uid = required_string(event, "iCalUId", "Graph meeting event has no iCalUId")?;
     let canonical = event_instant(event, "start")?.to_rfc3339_opts(SecondsFormat::AutoSi, true);
-    occurrence_identity(&observer.id, i_cal_uid, &canonical)
-}
-
-fn event_occurrence_key(event: &Value) -> Result<String, String> {
-    let i_cal_uid = required_string(event, "iCalUId", "Graph meeting event has no iCalUId")?;
-    let canonical = event_instant(event, "start")?.to_rfc3339_opts(SecondsFormat::AutoSi, true);
-    occurrence_key(i_cal_uid, &canonical)
+    let organizer = if event.get("isOrganizer").and_then(Value::as_bool) == Some(true) {
+        format!("member:{}", observer.id)
+    } else if let Some(member) = organizer_member(event, roster) {
+        format!("member:{}", member.id)
+    } else if let Some(address) = organizer_address(event) {
+        format!("address:{address}")
+    } else {
+        return Err("Graph meeting event has no organizer identity".into());
+    };
+    occurrence_identity(&organizer, i_cal_uid, &canonical)
 }
 
 fn project_calendar_event(event: &Value) -> Value {
@@ -1248,8 +1235,9 @@ fn organizer_address(event: &Value) -> Option<String> {
         .and_then(|value| value.get("emailAddress"))
         .and_then(|value| value.get("address"))
         .and_then(Value::as_str)
+        .map(str::trim)
         .filter(|value| !value.is_empty())
-        .map(|value| value.to_ascii_lowercase())
+        .map(str::to_ascii_lowercase)
 }
 
 fn resolve_organizer<T: Transport>(
@@ -2400,7 +2388,7 @@ mod tests {
     }
 
     #[test]
-    fn external_organizer_copies_do_not_cross_pending_batch_boundaries() {
+    fn external_identity_converges_copies_but_preserves_distinct_organizers_across_batches() {
         let users = (0..257)
             .map(|index| format!("member-{index:03}@example.test"))
             .collect::<Vec<_>>();
@@ -2482,6 +2470,10 @@ mod tests {
         };
 
         let second_event = event("second-copy", &[&members[256]]);
+        let mut colliding_external_event = event("separately-owned-copy", &[&members[256]]);
+        colliding_external_event["organizer"] = json!({
+            "emailAddress": { "address": "another.external@example.test" }
+        });
         let mut second_exchanges = roster_exchanges();
         second_exchanges.push((
             calendar_path(
@@ -2489,7 +2481,10 @@ mod tests {
                 "2026-08-01T00:00:00Z",
                 "2026-08-02T00:00:00Z",
             ),
-            response(200, json!({ "value": [second_event] })),
+            response(
+                200,
+                json!({ "value": [second_event, colliding_external_event] }),
+            ),
         ));
         let mut second = ScriptTransport::new(second_exchanges);
         let second_batch = fetch_meeting_batch(
@@ -2505,9 +2500,9 @@ mod tests {
         )
         .unwrap();
         assert!(second.exhausted());
-        assert_eq!(second_batch.item_count, 0);
+        assert_eq!(second_batch.item_count, 1);
         assert_eq!(second_batch.completion, BatchCompletion::Complete);
-        assert_eq!(emitted.len(), 1);
+        assert_eq!(emitted.len(), 2);
     }
 
     #[test]
@@ -2939,9 +2934,64 @@ mod tests {
             "timeZone": "UTC"
         });
         assert_eq!(
-            event_occurrence_identity(&graph, &observer).unwrap(),
-            occurrence_identity("user-beta", "SYNTHETIC-OCCURRENCE", "2026-08-01T10:00:00Z")
-                .unwrap()
+            event_occurrence_identity(&graph, &observer, std::slice::from_ref(&observer)).unwrap(),
+            occurrence_identity(
+                "member:user-beta",
+                "SYNTHETIC-OCCURRENCE",
+                "2026-08-01T10:00:00Z"
+            )
+            .unwrap()
+        );
+    }
+
+    #[test]
+    fn external_occurrence_identity_is_stable_across_observer_and_roster_changes() {
+        let alpha = RosterMember {
+            id: "user-alpha".into(),
+            user_principal_name: "alpha@example.test".into(),
+            display_name: Some("Alpha".into()),
+            mail: Some("alpha@example.test".into()),
+        };
+        let beta = RosterMember {
+            id: "user-beta".into(),
+            user_principal_name: "beta@example.test".into(),
+            display_name: Some("Beta".into()),
+            mail: Some("beta@example.test".into()),
+        };
+        let first = meeting_event("first-copy", " External@Example.Test ");
+        let second = meeting_event("second-copy", "external@example.test");
+
+        let before =
+            event_occurrence_identity(&first, &alpha, &[alpha.clone(), beta.clone()]).unwrap();
+        let after = event_occurrence_identity(&second, &beta, std::slice::from_ref(&beta)).unwrap();
+
+        assert_eq!(before, after);
+        assert_eq!(
+            before,
+            occurrence_identity(
+                "address:external@example.test",
+                "SYNTHETIC-OCCURRENCE",
+                "2026-08-01T10:00:00Z"
+            )
+            .unwrap()
+        );
+    }
+
+    #[test]
+    fn external_organizers_with_shared_uid_and_start_remain_distinct() {
+        let observer = RosterMember {
+            id: "user-alpha".into(),
+            user_principal_name: "alpha@example.test".into(),
+            display_name: Some("Alpha".into()),
+            mail: Some("alpha@example.test".into()),
+        };
+        let first = meeting_event("first", "first.external@example.test");
+        let second = meeting_event("second", "second.external@example.test");
+        let roster = std::slice::from_ref(&observer);
+
+        assert_ne!(
+            event_occurrence_identity(&first, &observer, roster).unwrap(),
+            event_occurrence_identity(&second, &observer, roster).unwrap()
         );
     }
 

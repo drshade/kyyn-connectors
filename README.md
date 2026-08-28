@@ -87,9 +87,12 @@ aborting the population. The calendar request selects only the fields the
 product consumes; the exact set is `CALENDAR_FIELDS`, including mailbox-relative
 `isOrganizer` so conflicting calendar copies route through the provider-designated organizer; duplicate
 invitation copies are assigned to one deterministic population observer. The
-canonical observer, normalized `iCalUId` and start instant together identify an
-occurrence, so separately owned meetings are not collapsed merely because an
-imported calendar UID collides.
+organizer identity, normalized `iCalUId` and start instant together identify an
+occurrence: an internal organizer uses its canonical provider member id and an
+external organizer uses its normalized address. Separately owned meetings are
+therefore not collapsed merely because an imported calendar UID collides, and
+external-meeting identity does not depend on which invited member remains in
+the configured population.
 
 Meeting metadata, transcripts and attendance are always addressed through the
 calendar organizer's canonical provider identity, never an attendee whose
