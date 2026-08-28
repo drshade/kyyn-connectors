@@ -15,6 +15,7 @@ const MAX_COLLECTION_BYTES: usize = 16 * 1024 * 1024;
 // sides of Kyyn's immutable 1 MiB configurator envelope.
 const MAX_MEMBERS: usize = 3_000;
 const CALENDAR_PAGE_SIZE: usize = 500;
+pub const MEETING_OCCURRENCE_PREFIX: &str = "occurrence:v1:";
 const CALENDAR_BATCH_WIDTH: usize = 8;
 // One evidence file per emitted item plus the shared roster must fit Kyyn's
 // 4,096-file source invocation allowance. Thirty-two sparse waves also bound
@@ -1028,7 +1029,7 @@ fn validate_batch_checkpoint(
         || checkpoint.pending.len() > CALENDAR_BATCH_WIDTH
         || checkpoint.external_occurrences.iter().any(|identity| {
             identity
-                .strip_prefix("occurrence:v2:")
+                .strip_prefix(MEETING_OCCURRENCE_PREFIX)
                 .is_none_or(|digest| {
                     digest.len() != 64
                         || !digest
@@ -1136,7 +1137,19 @@ fn occurrence_identity(
         .to_rfc3339_opts(SecondsFormat::AutoSi, true);
     let digest =
         Sha256::digest(format!("{normalized_organizer}\0{normalized_uid}\0{start}").as_bytes());
-    Ok(format!("occurrence:v2:{digest:x}"))
+    Ok(format!("{MEETING_OCCURRENCE_PREFIX}{digest:x}"))
+}
+
+pub fn meeting_occurrence_digest(identity: &str) -> Result<&str, String> {
+    identity
+        .strip_prefix(MEETING_OCCURRENCE_PREFIX)
+        .filter(|digest| {
+            digest.len() == 64
+                && digest
+                    .bytes()
+                    .all(|byte| byte.is_ascii_hexdigit() && !byte.is_ascii_uppercase())
+        })
+        .ok_or_else(|| "meeting occurrence identity is invalid".to_string())
 }
 
 fn event_occurrence_identity(
@@ -2942,6 +2955,22 @@ mod tests {
             )
             .unwrap()
         );
+    }
+
+    #[test]
+    fn published_identity_and_adapter_digest_share_the_single_v1_contract() {
+        let identity = occurrence_identity(
+            "member:user-alpha",
+            "SYNTHETIC-OCCURRENCE",
+            "2026-08-01T10:00:00Z",
+        )
+        .unwrap();
+        let digest = meeting_occurrence_digest(&identity).unwrap();
+
+        assert_eq!(identity, format!("{MEETING_OCCURRENCE_PREFIX}{digest}"));
+        assert_eq!(digest.len(), 64);
+        assert!(meeting_occurrence_digest(&format!("occurrence:v2:{digest}")).is_err());
+        assert!(meeting_occurrence_digest("occurrence:v1:short").is_err());
     }
 
     #[test]
