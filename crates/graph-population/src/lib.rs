@@ -25,7 +25,7 @@ const MAX_CALENDAR_WAVES: usize = 32;
 // meeting series. A full returned window can therefore distinguish aged-out
 // evidence from a report that was never produced.
 const ATTENDANCE_REPORT_RETENTION_LIMIT: usize = 50;
-const CALENDAR_FIELDS: &str = "iCalUId,subject,start,end,organizer,attendees,isOnlineMeeting,onlineMeeting,isCancelled,categories,type,seriesMasterId,responseStatus";
+const CALENDAR_FIELDS: &str = "iCalUId,subject,start,end,organizer,isOrganizer,attendees,isOnlineMeeting,onlineMeeting,isCancelled,categories,type,seriesMasterId,responseStatus";
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
@@ -1172,6 +1172,15 @@ fn member_matches(member: &RosterMember, addresses: &BTreeSet<String>) -> bool {
 }
 
 fn is_canonical_observer(event: &Value, member: &RosterMember, roster: &[RosterMember]) -> bool {
+    match event.get("isOrganizer").and_then(Value::as_bool) {
+        // Graph's mailbox-relative role is the authoritative route when
+        // calendar copies disagree about the organizer address. Without it,
+        // two copies can each name their own mailbox as organizer and become
+        // the same occurrence in separate durable batches.
+        Some(true) => return true,
+        Some(false) if organizer_member(event, roster).is_some() => return false,
+        Some(false) | None => {}
+    }
     if let Some(organizer) = organizer_member(event, roster) {
         return organizer.id == member.id;
     }
@@ -1707,6 +1716,14 @@ mod tests {
     use serde_json::json;
     use std::collections::VecDeque;
 
+    #[test]
+    fn calendar_selection_matches_the_independent_fixture_contract() {
+        assert_eq!(
+            CALENDAR_FIELDS,
+            graph_population_fixture::EXACT_CALENDAR_SELECTION
+        );
+    }
+
     struct ScriptTransport {
         exchanges: VecDeque<(String, Response)>,
         requested: Vec<String>,
@@ -1833,6 +1850,7 @@ mod tests {
             "organizer": {
                 "emailAddress": { "address": member.user_principal_name }
             },
+            "isOrganizer": true,
             "attendees": [],
             "isOnlineMeeting": false,
             "onlineMeeting": null,
@@ -2369,6 +2387,7 @@ mod tests {
             event["organizer"] = json!({
                 "emailAddress": { "address": "external@example.test" }
             });
+            event["isOrganizer"] = json!(false);
             event["attendees"] = Value::Array(
                 attendees
                     .iter()
@@ -2428,6 +2447,100 @@ mod tests {
                 "2026-08-02T00:00:00Z",
             ),
             response(200, json!({ "value": [second_event] })),
+        ));
+        let mut second = ScriptTransport::new(second_exchanges);
+        let second_batch = fetch_meeting_batch(
+            &mut second,
+            &config,
+            "2026-08-01T00:00:00Z",
+            "2026-08-02T00:00:00Z",
+            Some(&checkpoint),
+            |meeting| {
+                assert!(emitted.insert(meeting.id));
+                Ok(())
+            },
+        )
+        .unwrap();
+        assert!(second.exhausted());
+        assert_eq!(second_batch.item_count, 0);
+        assert_eq!(second_batch.completion, BatchCompletion::Complete);
+        assert_eq!(emitted.len(), 1);
+    }
+
+    #[test]
+    fn mailbox_role_routes_conflicting_internal_organizer_copies_across_batches() {
+        let users = (0..257)
+            .map(|index| format!("member-{index:03}@example.test"))
+            .collect::<Vec<_>>();
+        let user_refs = users.iter().map(String::as_str).collect::<Vec<_>>();
+        let config = selected(&user_refs);
+        let members = users
+            .iter()
+            .enumerate()
+            .map(|(index, upn)| RosterMember {
+                id: format!("user-{index:03}"),
+                user_principal_name: upn.clone(),
+                display_name: Some(upn.clone()),
+                mail: Some(upn.clone()),
+            })
+            .collect::<Vec<_>>();
+        let roster_exchanges = || {
+            users
+                .iter()
+                .enumerate()
+                .map(|(index, upn)| selected_user(upn, &format!("user-{index:03}")))
+                .collect::<Vec<_>>()
+        };
+        let copy = |member: &RosterMember, provider_id: &str, is_organizer: bool| {
+            let mut event = offline_meeting_event(member, 0);
+            event["id"] = json!(provider_id);
+            event["iCalUId"] = json!("SHARED-INTERNAL-OCCURRENCE");
+            event["isOrganizer"] = json!(is_organizer);
+            event
+        };
+
+        let mut first_exchanges = roster_exchanges();
+        for member in &members[..256] {
+            let values = if member.id == members[0].id {
+                vec![copy(member, "organizer-copy", true)]
+            } else {
+                Vec::new()
+            };
+            first_exchanges.push((
+                calendar_path(member, "2026-08-01T00:00:00Z", "2026-08-02T00:00:00Z"),
+                response(200, json!({ "value": values })),
+            ));
+        }
+        let mut emitted = BTreeSet::new();
+        let mut first = ScriptTransport::new(first_exchanges);
+        let first_batch = fetch_meeting_batch(
+            &mut first,
+            &config,
+            "2026-08-01T00:00:00Z",
+            "2026-08-02T00:00:00Z",
+            None,
+            |meeting| {
+                assert!(emitted.insert(meeting.id));
+                Ok(())
+            },
+        )
+        .unwrap();
+        assert!(first.exhausted());
+        assert_eq!(first_batch.item_count, 1);
+        let BatchCompletion::Pending { checkpoint } = first_batch.completion else {
+            panic!("the conflicting attendee copy must remain beyond the batch boundary");
+        };
+
+        let attendee = &members[256];
+        let mut second_exchanges = roster_exchanges();
+        second_exchanges.push((
+            calendar_path(attendee, "2026-08-01T00:00:00Z", "2026-08-02T00:00:00Z"),
+            response(
+                200,
+                json!({
+                    "value": [copy(attendee, "attendee-copy", false)]
+                }),
+            ),
         ));
         let mut second = ScriptTransport::new(second_exchanges);
         let second_batch = fetch_meeting_batch(

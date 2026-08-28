@@ -8,7 +8,7 @@
         {
           "request": {
             "method": "GET",
-            "path": "/v1.0/users/user-attendee/calendarView?startDateTime=2026-08-01T00:00:00Z&endDateTime=2026-08-02T00:00:00Z&$select=iCalUId,subject,start,end,organizer,attendees,isOnlineMeeting,onlineMeeting,isCancelled,categories,type,seriesMasterId,responseStatus&$top=500"
+            "path": "/v1.0/users/user-attendee/calendarView?startDateTime=2026-08-01T00:00:00Z&endDateTime=2026-08-02T00:00:00Z&$select=iCalUId,subject,start,end,organizer,isOrganizer,attendees,isOnlineMeeting,onlineMeeting,isCancelled,categories,type,seriesMasterId,responseStatus&$top=500"
           },
           "response": {
             "status": 200,

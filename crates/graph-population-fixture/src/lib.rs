@@ -7,6 +7,8 @@ use serde_json::Value;
 
 const FIXTURE: &str = include_str!("../fixtures/graph-population-v1.json");
 
+pub const EXACT_CALENDAR_SELECTION: &str = "iCalUId,subject,start,end,organizer,isOrganizer,attendees,isOnlineMeeting,onlineMeeting,isCancelled,categories,type,seriesMasterId,responseStatus";
+
 #[derive(Clone, Debug, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct Suite {
@@ -110,6 +112,30 @@ mod tests {
                 Proof::ClosedArtifactOutcome,
             ])
         );
+    }
+
+    #[test]
+    fn exact_calendar_selection_proof_pins_the_complete_field_set() {
+        let suite = suite();
+        let proving = suite
+            .scenarios
+            .iter()
+            .filter(|scenario| scenario.proves.contains(&Proof::ExactCalendarSelection))
+            .collect::<Vec<_>>();
+        assert_eq!(proving.len(), 1);
+        let calendar_requests = proving[0]
+            .exchanges
+            .iter()
+            .filter(|exchange| exchange.request.path.contains("/calendarView?"))
+            .collect::<Vec<_>>();
+        assert_eq!(calendar_requests.len(), 1);
+        let selection = calendar_requests[0]
+            .request
+            .path
+            .split_once("$select=")
+            .and_then(|(_, suffix)| suffix.split('&').next())
+            .expect("exact-selection proof carries one $select query");
+        assert_eq!(selection, EXACT_CALENDAR_SELECTION);
     }
 
     #[test]
