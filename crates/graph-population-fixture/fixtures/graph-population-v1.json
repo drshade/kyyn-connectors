@@ -1,5 +1,5 @@
 {
-  "fixtureVersion": 3,
+  "fixtureVersion": 4,
   "scenarios": [
     {
       "id": "bounded-calendar-page",
@@ -80,6 +80,48 @@
           "response": {
             "status": 200,
             "body": { "value": [] }
+          }
+        }
+      ]
+    },
+    {
+      "id": "separately-organized-imported-uid-collision",
+      "proves": ["organizer-uid-collision"],
+      "exchanges": [
+        {
+          "request": {
+            "method": "GET",
+            "path": "/v1.0/users/user-first-organizer/calendarView?$skiptoken=synthetic-first-owner"
+          },
+          "response": {
+            "status": 200,
+            "body": {
+              "value": [{
+                "id": "first-owned-event",
+                "iCalUId": "colliding-imported-uid",
+                "isOrganizer": true,
+                "organizer": { "emailAddress": { "address": "first@example.test" } },
+                "start": { "dateTime": "2026-08-01T10:00:00Z" }
+              }]
+            }
+          }
+        },
+        {
+          "request": {
+            "method": "GET",
+            "path": "/v1.0/users/user-second-organizer/calendarView?$skiptoken=synthetic-second-owner"
+          },
+          "response": {
+            "status": 200,
+            "body": {
+              "value": [{
+                "id": "second-owned-event",
+                "iCalUId": "colliding-imported-uid",
+                "isOrganizer": true,
+                "organizer": { "emailAddress": { "address": "second@example.test" } },
+                "start": { "dateTime": "2026-08-01T10:00:00Z" }
+              }]
+            }
           }
         }
       ]

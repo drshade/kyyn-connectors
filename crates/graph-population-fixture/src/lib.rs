@@ -31,6 +31,7 @@ pub enum Proof {
     BoundedBatch,
     ExactCalendarSelection,
     OrganizerRouting,
+    OrganizerUidCollision,
     OccurrenceDeduplication,
     OccurrenceArtifactJoin,
     PermissionOutcome,
@@ -79,8 +80,8 @@ mod tests {
     #[test]
     fn corpus_is_closed_synthetic_and_covers_the_amended_boundary() {
         let suite = suite();
-        assert_eq!(suite.fixture_version, 3);
-        assert_eq!(suite.scenarios.len(), 5);
+        assert_eq!(suite.fixture_version, 4);
+        assert_eq!(suite.scenarios.len(), 6);
         assert!(!FIXTURE.contains("bee-skills"));
         assert!(!FIXTURE.contains("auditLog"));
         assert!(!FIXTURE.contains("/me/"));
@@ -105,6 +106,7 @@ mod tests {
                 Proof::BoundedBatch,
                 Proof::ExactCalendarSelection,
                 Proof::OrganizerRouting,
+                Proof::OrganizerUidCollision,
                 Proof::OccurrenceDeduplication,
                 Proof::OccurrenceArtifactJoin,
                 Proof::PermissionOutcome,
@@ -136,6 +138,25 @@ mod tests {
             .and_then(|(_, suffix)| suffix.split('&').next())
             .expect("exact-selection proof carries one $select query");
         assert_eq!(selection, EXACT_CALENDAR_SELECTION);
+    }
+
+    #[test]
+    fn organizer_uid_collision_proof_pins_two_provider_declared_owners() {
+        let scenario = suite()
+            .scenarios
+            .into_iter()
+            .find(|scenario| scenario.proves.contains(&Proof::OrganizerUidCollision))
+            .expect("organizer UID collision proof");
+        let events = scenario
+            .exchanges
+            .iter()
+            .map(|exchange| &exchange.response.body["value"][0])
+            .collect::<Vec<_>>();
+        assert_eq!(events.len(), 2);
+        assert!(events.iter().all(|event| event["isOrganizer"] == true));
+        assert_eq!(events[0]["iCalUId"], events[1]["iCalUId"]);
+        assert_eq!(events[0]["start"], events[1]["start"]);
+        assert_ne!(events[0]["organizer"], events[1]["organizer"]);
     }
 
     #[test]
