@@ -17,7 +17,7 @@ mod guest {
     use bindings::kyyn::source::{control, evidence};
     use graph_population::{
         ArtifactOutcome, BatchCompletion, Method, PopulationConfig, Request, Response, Transport,
-        meeting_occurrence_digest,
+        meeting_occurrence_digest, member_observation_digest,
     };
 
     const GRAPH_ORIGIN: &str = "https://graph.microsoft.com";
@@ -208,10 +208,7 @@ mod guest {
                     .map_err(|_| "could not encode unavailable member evidence".to_string())?;
                 let file_name = format!(
                     "members/{}.json",
-                    unavailable_member
-                        .id
-                        .strip_prefix("member-observation:v1:")
-                        .ok_or_else(|| "member observation identity is invalid".to_string())?
+                    member_observation_digest(&unavailable_member.id)?
                 );
                 let member_sha256 = write_evidence(&file_name, &member_bytes)?;
                 items.push(Item {

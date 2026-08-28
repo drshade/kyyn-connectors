@@ -16,6 +16,7 @@ const MAX_COLLECTION_BYTES: usize = 16 * 1024 * 1024;
 const MAX_MEMBERS: usize = 3_000;
 const CALENDAR_PAGE_SIZE: usize = 500;
 pub const MEETING_OCCURRENCE_PREFIX: &str = "occurrence:v1:";
+pub const MEMBER_OBSERVATION_PREFIX: &str = "member-observation:v1:";
 const CALENDAR_BATCH_WIDTH: usize = 8;
 // One evidence file per emitted item plus the shared roster must fit Kyyn's
 // 4,096-file source invocation allowance. Thirty-two sparse waves also bound
@@ -989,7 +990,7 @@ fn member_unavailable(
     let digest =
         Sha256::digest(format!("{}\0{start}\0{until}\0mailbox-unavailable", member.id).as_bytes());
     MemberUnavailable {
-        id: format!("member-observation:v1:{digest:x}"),
+        id: format!("{MEMBER_OBSERVATION_PREFIX}{digest:x}"),
         member_id: member.id.clone(),
         user_principal_name: member.user_principal_name.clone(),
         window_start: start.into(),
@@ -1141,15 +1142,22 @@ fn occurrence_identity(
 }
 
 pub fn meeting_occurrence_digest(identity: &str) -> Result<&str, String> {
-    identity
-        .strip_prefix(MEETING_OCCURRENCE_PREFIX)
-        .filter(|digest| {
-            digest.len() == 64
-                && digest
-                    .bytes()
-                    .all(|byte| byte.is_ascii_hexdigit() && !byte.is_ascii_uppercase())
-        })
+    identity_digest(identity, MEETING_OCCURRENCE_PREFIX)
         .ok_or_else(|| "meeting occurrence identity is invalid".to_string())
+}
+
+pub fn member_observation_digest(identity: &str) -> Result<&str, String> {
+    identity_digest(identity, MEMBER_OBSERVATION_PREFIX)
+        .ok_or_else(|| "member observation identity is invalid".to_string())
+}
+
+fn identity_digest<'a>(identity: &'a str, prefix: &str) -> Option<&'a str> {
+    identity.strip_prefix(prefix).filter(|digest| {
+        digest.len() == 64
+            && digest
+                .bytes()
+                .all(|byte| byte.is_ascii_hexdigit() && !byte.is_ascii_uppercase())
+    })
 }
 
 fn event_occurrence_identity(
@@ -2314,7 +2322,7 @@ mod tests {
             unavailable.provider_code.as_deref(),
             Some("MailboxNotEnabledForRESTAPI")
         );
-        assert!(unavailable.id.starts_with("member-observation:v1:"));
+        assert!(unavailable.id.starts_with(MEMBER_OBSERVATION_PREFIX));
     }
 
     #[test]
@@ -2958,7 +2966,7 @@ mod tests {
     }
 
     #[test]
-    fn published_identity_and_adapter_digest_share_the_single_v1_contract() {
+    fn published_identities_and_adapter_digests_share_the_single_v1_contract() {
         let identity = occurrence_identity(
             "member:user-alpha",
             "SYNTHETIC-OCCURRENCE",
@@ -2971,6 +2979,28 @@ mod tests {
         assert_eq!(digest.len(), 64);
         assert!(meeting_occurrence_digest(&format!("occurrence:v2:{digest}")).is_err());
         assert!(meeting_occurrence_digest("occurrence:v1:short").is_err());
+
+        let member = RosterMember {
+            id: "user-alpha".into(),
+            user_principal_name: "alpha@example.test".into(),
+            display_name: Some("Alpha".into()),
+            mail: Some("alpha@example.test".into()),
+        };
+        let unavailable = member_unavailable(
+            &member,
+            "2026-08-01T00:00:00Z",
+            "2026-08-02T00:00:00Z",
+            None,
+        );
+        let digest = member_observation_digest(&unavailable.id).unwrap();
+
+        assert_eq!(
+            unavailable.id,
+            format!("{MEMBER_OBSERVATION_PREFIX}{digest}")
+        );
+        assert_eq!(digest.len(), 64);
+        assert!(member_observation_digest(&format!("member-observation:v2:{digest}")).is_err());
+        assert!(member_observation_digest("member-observation:v1:short").is_err());
     }
 
     #[test]
