@@ -424,7 +424,8 @@ pub fn fetch_meeting_batch<T: Transport, F: FnMut(PopulationMeeting) -> Result<(
     validate_batch_checkpoint(&cursor, &roster)?;
     let mut item_count = 0usize;
     let mut unavailable_members = Vec::new();
-    let mut emitted_occurrences = cursor.external_occurrences.clone();
+    let mut emitted_items = BTreeSet::new();
+    let mut external_occurrences = cursor.external_occurrences.clone();
     let mut observations = ObservationCache::default();
     let mut waves = 0usize;
     loop {
@@ -480,20 +481,30 @@ pub fn fetch_meeting_batch<T: Transport, F: FnMut(PopulationMeeting) -> Result<(
                 if !is_canonical_observer(&event, member, &roster) {
                     continue;
                 }
-                let id = event_occurrence_identity(&event)?;
+                let id = event_occurrence_identity(&event, member)?;
+                let occurrence_key = event_occurrence_key(&event)?;
                 let external_organizer = organizer_member(&event, &roster).is_none();
                 let provider_id =
                     required_string(&event, "id", "Graph meeting event has no identity")?;
-                events.push((id, provider_id.to_string(), external_organizer, event));
+                events.push((
+                    id,
+                    occurrence_key,
+                    provider_id.to_string(),
+                    external_organizer,
+                    event,
+                ));
             }
-            events.sort_by(|left, right| left.0.cmp(&right.0).then_with(|| left.1.cmp(&right.1)));
+            events.sort_by(|left, right| left.0.cmp(&right.0).then_with(|| left.2.cmp(&right.2)));
             events.dedup_by(|left, right| left.0 == right.0);
-            for (expected_id, _, external_organizer, event) in events {
-                if !emitted_occurrences.insert(expected_id.clone()) {
+            for (expected_id, occurrence_key, _, external_organizer, event) in events {
+                if !emitted_items.insert(expected_id.clone()) {
                     continue;
                 }
                 if external_organizer {
-                    cursor.external_occurrences.insert(expected_id.clone());
+                    if !external_occurrences.insert(occurrence_key.clone()) {
+                        continue;
+                    }
+                    cursor.external_occurrences.insert(occurrence_key);
                 }
                 item_count = item_count
                     .checked_add(1)
@@ -539,7 +550,7 @@ fn observe_meeting<T: Transport>(
     event: Value,
 ) -> Result<PopulationMeeting, String> {
     let provider_event_id = required_string(&event, "id", "Graph meeting event has no identity")?;
-    let id = event_occurrence_identity(&event)?;
+    let id = event_occurrence_identity(&event, member)?;
     let calendar_event = project_calendar_event(&event);
     let Some(join_url) = event
         .get("onlineMeeting")
@@ -1113,7 +1124,7 @@ fn intervals_overlap(
     left.0 < right.1 && right.0 < left.1
 }
 
-fn occurrence_identity(i_cal_uid: &str, start: &str) -> Result<String, String> {
+fn occurrence_key(i_cal_uid: &str, start: &str) -> Result<String, String> {
     let normalized_uid = i_cal_uid.trim();
     if normalized_uid.is_empty() {
         return Err("Graph meeting event has an empty normalized iCalUId".into());
@@ -1126,10 +1137,38 @@ fn occurrence_identity(i_cal_uid: &str, start: &str) -> Result<String, String> {
     Ok(format!("occurrence:v1:{digest:x}"))
 }
 
-fn event_occurrence_identity(event: &Value) -> Result<String, String> {
+fn occurrence_identity(
+    observer_member_id: &str,
+    i_cal_uid: &str,
+    start: &str,
+) -> Result<String, String> {
+    let normalized_observer = observer_member_id.trim();
+    if normalized_observer.is_empty() {
+        return Err("Graph meeting observer has an empty normalized identity".into());
+    }
+    let normalized_uid = i_cal_uid.trim();
+    if normalized_uid.is_empty() {
+        return Err("Graph meeting event has an empty normalized iCalUId".into());
+    }
+    let start = DateTime::parse_from_rfc3339(start)
+        .map_err(|_| "Graph meeting event start is not RFC3339".to_string())?
+        .with_timezone(&Utc)
+        .to_rfc3339_opts(SecondsFormat::AutoSi, true);
+    let digest =
+        Sha256::digest(format!("{normalized_observer}\0{normalized_uid}\0{start}").as_bytes());
+    Ok(format!("occurrence:v2:{digest:x}"))
+}
+
+fn event_occurrence_identity(event: &Value, observer: &RosterMember) -> Result<String, String> {
     let i_cal_uid = required_string(event, "iCalUId", "Graph meeting event has no iCalUId")?;
     let canonical = event_instant(event, "start")?.to_rfc3339_opts(SecondsFormat::AutoSi, true);
-    occurrence_identity(i_cal_uid, &canonical)
+    occurrence_identity(&observer.id, i_cal_uid, &canonical)
+}
+
+fn event_occurrence_key(event: &Value) -> Result<String, String> {
+    let i_cal_uid = required_string(event, "iCalUId", "Graph meeting event has no iCalUId")?;
+    let canonical = event_instant(event, "start")?.to_rfc3339_opts(SecondsFormat::AutoSi, true);
+    occurrence_key(i_cal_uid, &canonical)
 }
 
 fn project_calendar_event(event: &Value) -> Value {
@@ -1981,6 +2020,10 @@ mod tests {
         let mut beta_event = offline_meeting_event(&beta, 0);
         alpha_event["iCalUId"] = json!("SHARED-OCCURRENCE");
         beta_event["iCalUId"] = json!("SHARED-OCCURRENCE");
+        beta_event["isOrganizer"] = json!(false);
+        beta_event["organizer"] = json!({
+            "emailAddress": { "address": alpha.user_principal_name }
+        });
         let mut transport = ScriptTransport::new(vec![
             selected_user("alpha@example.test", "user-alpha"),
             selected_user("beta@example.test", "user-beta"),
@@ -2562,6 +2605,104 @@ mod tests {
     }
 
     #[test]
+    fn provider_declared_organizers_with_shared_uid_remain_distinct_across_batches() {
+        let users = (0..257)
+            .map(|index| format!("member-{index:03}@example.test"))
+            .collect::<Vec<_>>();
+        let user_refs = users.iter().map(String::as_str).collect::<Vec<_>>();
+        let config = selected(&user_refs);
+        let members = users
+            .iter()
+            .enumerate()
+            .map(|(index, upn)| RosterMember {
+                id: format!("user-{index:03}"),
+                user_principal_name: upn.clone(),
+                display_name: Some(upn.clone()),
+                mail: Some(upn.clone()),
+            })
+            .collect::<Vec<_>>();
+        let roster_exchanges = || {
+            users
+                .iter()
+                .enumerate()
+                .map(|(index, upn)| selected_user(upn, &format!("user-{index:03}")))
+                .collect::<Vec<_>>()
+        };
+        let organizer_event = |member: &RosterMember, provider_id: &str| {
+            let mut event = offline_meeting_event(member, 0);
+            event["id"] = json!(provider_id);
+            event["iCalUId"] = json!("COLLIDING-IMPORTED-UID");
+            event["isOrganizer"] = json!(true);
+            event
+        };
+
+        let mut first_exchanges = roster_exchanges();
+        for member in &members[..256] {
+            let values = if member.id == members[0].id {
+                vec![organizer_event(member, "first-owned-event")]
+            } else {
+                Vec::new()
+            };
+            first_exchanges.push((
+                calendar_path(member, "2026-08-01T00:00:00Z", "2026-08-02T00:00:00Z"),
+                response(200, json!({ "value": values })),
+            ));
+        }
+        let mut emitted = BTreeSet::new();
+        let mut first = ScriptTransport::new(first_exchanges);
+        let first_batch = fetch_meeting_batch(
+            &mut first,
+            &config,
+            "2026-08-01T00:00:00Z",
+            "2026-08-02T00:00:00Z",
+            None,
+            |meeting| {
+                assert!(emitted.insert(meeting.id));
+                Ok(())
+            },
+        )
+        .unwrap();
+        assert!(first.exhausted());
+        assert_eq!(first_batch.item_count, 1);
+        let BatchCompletion::Pending { checkpoint } = first_batch.completion else {
+            panic!("the second provider-declared organizer must remain beyond the boundary");
+        };
+
+        let second_organizer = &members[256];
+        let mut second_exchanges = roster_exchanges();
+        second_exchanges.push((
+            calendar_path(
+                second_organizer,
+                "2026-08-01T00:00:00Z",
+                "2026-08-02T00:00:00Z",
+            ),
+            response(
+                200,
+                json!({
+                    "value": [organizer_event(second_organizer, "second-owned-event")]
+                }),
+            ),
+        ));
+        let mut second = ScriptTransport::new(second_exchanges);
+        let second_batch = fetch_meeting_batch(
+            &mut second,
+            &config,
+            "2026-08-01T00:00:00Z",
+            "2026-08-02T00:00:00Z",
+            Some(&checkpoint),
+            |meeting| {
+                assert!(emitted.insert(meeting.id));
+                Ok(())
+            },
+        )
+        .unwrap();
+        assert!(second.exhausted());
+        assert_eq!(second_batch.item_count, 1);
+        assert_eq!(second_batch.completion, BatchCompletion::Complete);
+        assert_eq!(emitted.len(), 2);
+    }
+
+    #[test]
     fn thousands_of_meetings_resume_across_the_item_bound_without_reemission() {
         let users = (0..257)
             .map(|index| format!("member-{index}@example.test"))
@@ -2787,13 +2928,20 @@ mod tests {
     #[test]
     fn graph_utc_datetime_shape_has_the_same_occurrence_identity_as_rfc3339() {
         let mut graph = meeting_event("copy-one", "beta@example.test");
+        let observer = RosterMember {
+            id: "user-beta".into(),
+            user_principal_name: "beta@example.test".into(),
+            display_name: Some("Beta".into()),
+            mail: Some("beta@example.test".into()),
+        };
         graph["start"] = json!({
             "dateTime": "2026-08-01T10:00:00.0000000",
             "timeZone": "UTC"
         });
         assert_eq!(
-            event_occurrence_identity(&graph).unwrap(),
-            occurrence_identity("SYNTHETIC-OCCURRENCE", "2026-08-01T10:00:00Z").unwrap()
+            event_occurrence_identity(&graph, &observer).unwrap(),
+            occurrence_identity("user-beta", "SYNTHETIC-OCCURRENCE", "2026-08-01T10:00:00Z")
+                .unwrap()
         );
     }
 

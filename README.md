@@ -86,8 +86,10 @@ calendar API becomes explicit bounded member-unavailable evidence rather than
 aborting the population. The calendar request selects only the fields the
 product consumes; the exact set is `CALENDAR_FIELDS`, including mailbox-relative
 `isOrganizer` so conflicting calendar copies route through the provider-designated organizer; duplicate
-invitation copies are assigned to one deterministic population observer by
-normalized `iCalUId` plus start instant.
+invitation copies are assigned to one deterministic population observer. The
+canonical observer, normalized `iCalUId` and start instant together identify an
+occurrence, so separately owned meetings are not collapsed merely because an
+imported calendar UID collides.
 
 Meeting metadata, transcripts and attendance are always addressed through the
 calendar organizer's canonical provider identity, never an attendee whose
