@@ -17,6 +17,7 @@ mod guest {
     use bindings::kyyn::source::{control, evidence};
     use graph_population::{
         ArtifactOutcome, BatchCompletion, Method, PopulationConfig, Request, Response, Transport,
+        meeting_occurrence_digest, member_observation_digest,
     };
 
     const GRAPH_ORIGIN: &str = "https://graph.microsoft.com";
@@ -170,12 +171,8 @@ mod guest {
                     ));
                     let meeting_bytes = serde_json::to_vec(&meeting)
                         .map_err(|_| "could not encode joined meeting evidence".to_string())?;
-                    let file_name = format!(
-                        "meetings/{}.json",
-                        meeting.id.strip_prefix("occurrence:v1:").ok_or_else(|| {
-                            "meeting occurrence identity is invalid".to_string()
-                        })?
-                    );
+                    let file_name =
+                        format!("meetings/{}.json", meeting_occurrence_digest(&meeting.id)?);
                     let meeting_sha256 = write_evidence(&file_name, &meeting_bytes)?;
                     item_drafts.push((
                         meeting.id,
@@ -211,10 +208,7 @@ mod guest {
                     .map_err(|_| "could not encode unavailable member evidence".to_string())?;
                 let file_name = format!(
                     "members/{}.json",
-                    unavailable_member
-                        .id
-                        .strip_prefix("member-observation:v1:")
-                        .ok_or_else(|| "member observation identity is invalid".to_string())?
+                    member_observation_digest(&unavailable_member.id)?
                 );
                 let member_sha256 = write_evidence(&file_name, &member_bytes)?;
                 items.push(Item {
