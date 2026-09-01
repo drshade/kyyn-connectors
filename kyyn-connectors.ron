@@ -134,7 +134,7 @@
             world: "kyyn:evidence-tool@1",
             execution_profile: "kyyn-evidence-tool-contained-1",
             component: "components/evidence-tools/graph-message-as-text.wasm",
-            component_sha256: "929f0dce9dbd54c0e21734c75d477162062c6e6ded97086c6b6537330ead5bdf",
+            component_sha256: "2762530a2165782cff9f62b8d2491e02525eb1afd1a188b5dca34b06511c23fc",
          )],
          config: [
             (name: "mail_filter", doc: "OData $filter fragment ANDed onto the mail window.", example: Some("contains(subject, 'Sales Update')")),

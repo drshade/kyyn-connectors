@@ -544,8 +544,12 @@ pub fn mail_text(content: &str, cursor: usize, max_bytes: usize) -> Result<MailT
     if cursor > text.len() {
         return Err("cursor exceeds message text length".into());
     }
-    let mut end = (cursor + max_bytes).min(text.len());
-    while end > cursor && !text.is_char_boundary(end) {
+    let mut start = cursor;
+    while start < text.len() && !text.is_char_boundary(start) {
+        start += 1;
+    }
+    let mut end = (start + max_bytes).min(text.len());
+    while end > start && !text.is_char_boundary(end) {
         end -= 1;
     }
     Ok(MailTextView {
@@ -554,11 +558,11 @@ pub fn mail_text(content: &str, cursor: usize, max_bytes: usize) -> Result<MailT
         from: mail.from,
         to: mail.to,
         cc: mail.cc,
-        byte_start: cursor,
+        byte_start: start,
         byte_end: end,
         total_bytes: text.len(),
         next_cursor: (end < text.len()).then_some(end),
-        text: text[cursor..end].into(),
+        text: text[start..end].into(),
     })
 }
 
@@ -592,6 +596,10 @@ fn html_text(input: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use graph_population::{
+        ArtifactOutcome, AttendanceArtifact, PopulationMeeting, TranscriptArtifact,
+    };
+    use serde_json::json;
     fn meeting(id: &str, start: &str) -> String {
         format!(
             r#"{{"id":"{id}","observedByUserPrincipalName":"a@example.test","calendarEvent":{{"subject":"Weekly","start":{{"dateTime":"{start}"}},"end":{{"dateTime":"{start}"}},"isOrganizer":true,"organizer":{{"emailAddress":{{"name":"A","address":"a@example.test"}}}},"attendees":[]}},"attendance":{{"outcome":"unavailable"}},"transcript":{{"outcome":"unavailable"}}}}"#
@@ -652,10 +660,71 @@ mod tests {
         assert_eq!(page.next_cursor, Some(page.byte_end));
     }
     #[test]
+    fn population_producer_round_trips_into_the_meeting_view() {
+        let produced = PopulationMeeting {
+            id: "occurrence:v1:producer-proof".into(),
+            observed_by_member_id: "member-1".into(),
+            observed_by_user_principal_name: "observer@example.test".into(),
+            provider_event_id: "event-1".into(),
+            calendar_event: json!({
+                "subject": "Architecture handover",
+                "start": {"dateTime": "2026-08-25T08:00:00Z"},
+                "end": {"dateTime": "2026-08-25T09:00:00Z"},
+                "isOrganizer": true,
+                "organizer": {"emailAddress": {"name": "Ada", "address": "ada@example.test"}},
+                "attendees": [{
+                    "emailAddress": {"name": "Grace", "address": "grace@example.test"},
+                    "status": {"response": "accepted"}
+                }]
+            }),
+            online_meeting: None,
+            transcript: ArtifactOutcome::Observed {
+                material: vec![TranscriptArtifact {
+                    id: "transcript-1".into(),
+                    created_date_time: "2026-08-25T09:00:00Z".into(),
+                    end_date_time: "2026-08-25T09:01:00Z".into(),
+                    media_type: "text/vtt".into(),
+                    content: "WEBVTT\n\n00:00.000 --> 00:01.000\nWelcome".into(),
+                }],
+            },
+            attendance: ArtifactOutcome::Observed {
+                material: vec![AttendanceArtifact {
+                    report_id: "report-1".into(),
+                    meeting_start_date_time: "2026-08-25T08:00:00Z".into(),
+                    meeting_end_date_time: "2026-08-25T09:00:00Z".into(),
+                    records: vec![json!({
+                        "emailAddress": "grace@example.test",
+                        "identity": {"displayName": "Grace"},
+                        "totalAttendanceInSeconds": 3570
+                    })],
+                }],
+            },
+        };
+        let encoded = serde_json::to_string(&produced).unwrap();
+        let parsed = parse_meeting(
+            "org-meeting:occurrence:v1:producer-proof@version",
+            &encoded,
+            true,
+        )
+        .unwrap();
+        assert_eq!(parsed.subject, "Architecture handover");
+        assert_eq!(parsed.organizer_name, "Ada");
+        assert_eq!(parsed.organizer_address, "ada@example.test");
+        assert_eq!(parsed.invitees[0].response.as_deref(), Some("accepted"));
+        assert_eq!(parsed.attendance[0].minutes, Some(60));
+        assert!(parsed.transcript.unwrap().contains("Welcome"));
+    }
+    #[test]
     fn html_entities_decode_once() {
         assert_eq!(
             html_text("<p>&amp;lt; hello&nbsp;world</p>"),
             "&lt; hello world"
         );
+    }
+    #[test]
+    fn mail_cursor_advances_to_a_character_boundary() {
+        let view = mail_text(r#"{"id":"mail-1","body":"éx"}"#, 1, 16).unwrap();
+        assert_eq!(view.byte_start, 2);
+        assert_eq!(view.text, "x");
     }
 }

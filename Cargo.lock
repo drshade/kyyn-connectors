@@ -140,6 +140,7 @@ checksum = "0cc23270f6e1808e30a928bdc84dea0b9b4136a8bc82338574f23baf47bbd280"
 name = "graph-evidence-views"
 version = "0.1.0"
 dependencies = [
+ "graph-population",
  "ron",
  "serde",
  "serde_json",
