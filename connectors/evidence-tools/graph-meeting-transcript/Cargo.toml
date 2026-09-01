@@ -1,0 +1,10 @@
+[package]
+name = "kyyn-evidence-tool-graph-meeting-transcript"
+version = "0.1.0"
+edition = "2024"
+publish = false
+[lib]
+crate-type = ["cdylib"]
+[dependencies]
+graph-evidence-views = { path = "../../../crates/graph-evidence-views" }
+wit-bindgen = "0.51.0"

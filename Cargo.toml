@@ -18,6 +18,11 @@ resolver = "2"
 members = [
     "connectors/configurators/microsoft-files",
     "connectors/configurators/graph-population",
+    "connectors/evidence-tools/graph-message-as-text",
+    "connectors/evidence-tools/graph-meeting-attendance",
+    "connectors/evidence-tools/graph-meeting-detail",
+    "connectors/evidence-tools/graph-meeting-occurrences",
+    "connectors/evidence-tools/graph-meeting-transcript",
     "connectors/connections/microsoft",
     "connectors/connections/salesforce",
     "connectors/sinks/file-replace",
@@ -35,6 +40,7 @@ members = [
     "connectors/sources/sweep",
     "crates/graph-population-fixture",
     "crates/graph-population",
+    "crates/graph-evidence-views",
     "crates/kyyn-source-bundle",
     "tools/connector-componentize",
 ]

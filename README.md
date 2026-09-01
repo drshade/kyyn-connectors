@@ -14,7 +14,7 @@ component before execution. This repo is what a fresh `kyyn init` pins —
 and the reference example for writing your own connector.
 
 Every advertised connector is served by a committed, digest-pinned,
-direction-distinct WebAssembly component. The repository keeps five boundaries
+direction-distinct WebAssembly component. The repository keeps these boundaries
 explicit:
 
 - `wit/source.wit`, `wit/connection.wit`, and `wit/configurator.wit` are byte-identical vendorings of
@@ -35,9 +35,16 @@ explicit:
   only declared transient and durable fields, can make only manifest-reviewed
   requests, and return closed durable configuration; provider URLs and
   diagnostics therefore stay in this repository rather than the Kyyn engine.
+- `connectors/evidence-tools/` contains read-only, source-bound views over
+  already-fetched verified evidence. The Graph tools render readable mail,
+  consolidate observer copies by held meeting occurrence, keep recurring dates
+  distinct, and expose meeting detail, cue-aligned transcript pages, and
+  per-occurrence attendance. They import only Kyyn's verified evidence host:
+  no network, credentials, knowledge, verdicts, proposals, or filesystem.
 - `components/sources/` and `components/sinks/` contain only direction-explicit
   executable artifacts consumers pin. `components/configurators/` contains the
-  equally digest-pinned setup guests.
+  equally digest-pinned setup guests; `components/evidence-tools/` contains the
+  source-compatible working views.
 - `crates/` contains reusable, execution-neutral connector logic consumed by
   component guests. `graph-population-fixture` is a native test-only corpus of
   synthetic ADR 0037 provider conversations shared by the population source
