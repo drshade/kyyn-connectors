@@ -1,0 +1,56 @@
+package kyyn:evidence-tool@1.0.0;
+
+/// Source-bound immutable run discovery and exact item-version paging.
+/// Requests and responses are canonical closed RON envelopes. The source is
+/// supplied by the engine invocation context and never named by the guest.
+interface runs {
+    record diagnostic { code: string, message: string }
+    list-runs: func(request: string) -> result<string, diagnostic>;
+    items: func(request: string) -> result<string, diagnostic>;
+}
+
+/// Optional recipe/proposal-aware selection over the same bound source. This
+/// is read-only queue visibility, not recipe or verdict authority.
+interface queue {
+    record diagnostic { code: string, message: string }
+    pending: func(request: string) -> result<string, diagnostic>;
+}
+
+/// Ordered, plural, hash-verified reads from the bound source. Named files
+/// select secondary parts; no request can name another source.
+interface evidence {
+    record diagnostic { code: string, message: string }
+    read: func(request: string) -> result<string, diagnostic>;
+    read-many: func(request: string) -> result<string, diagnostic>;
+}
+
+interface api {
+    record diagnostic { code: string, message: string }
+    variant body { text(string), ron(string) }
+    record view-member {
+        /// Connector-local deterministic identity. Kyyn qualifies it beneath
+        /// the accepted source instance and evidence-tool identity.
+        local-id: string,
+        /// Exact source item-version keys supporting this member. Every key
+        /// must have been hash-verified through the evidence host during this
+        /// invocation before Kyyn releases the result.
+        subjects: list<string>,
+    }
+    record output {
+        body: body,
+        members: list<view-member>,
+    }
+    invoke: func(parameters: string) -> result<output, diagnostic>;
+}
+
+/// Zero-host-authority view retained for pure/adversarial contract fixtures.
+world pure-evidence-tool { export api; }
+
+/// Connector-owned source interpretation. The engine links these three
+/// read-only families to exactly one accepted source instance.
+world evidence-tool {
+    import runs;
+    import queue;
+    import evidence;
+    export api;
+}

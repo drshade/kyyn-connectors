@@ -56,6 +56,21 @@ mod contract {
         config: Vec<ConfigField>,
         #[serde(default)]
         configurator: Option<Configurator>,
+        #[serde(default)]
+        evidence_tools: Vec<EvidenceTool>,
+    }
+
+    #[derive(Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct EvidenceTool {
+        name: String,
+        description: String,
+        parameters: ron::Value,
+        result: ron::Value,
+        world: String,
+        execution_profile: String,
+        component: String,
+        component_sha256: String,
     }
 
     #[derive(Deserialize)]
@@ -520,6 +535,20 @@ mod contract {
                 source.name
             );
             assert_eq!(source.component_sha256.len(), 64, "{} digest", source.name);
+            let mut tool_names = HashSet::new();
+            for tool in &source.evidence_tools {
+                assert!(
+                    tool_names.insert(&tool.name),
+                    "duplicate evidence tool {}",
+                    tool.name
+                );
+                assert!(!tool.description.trim().is_empty());
+                assert_eq!(tool.world, "kyyn:evidence-tool@1");
+                assert_eq!(tool.execution_profile, "kyyn-evidence-tool-contained-1");
+                assert!(tool.component.starts_with("components/evidence-tools/"));
+                assert_eq!(tool.component_sha256.len(), 64);
+                let _ = (&tool.parameters, &tool.result);
+            }
             if let Some(requirement) = &source.connection {
                 let provider = manifest
                     .connections
@@ -934,6 +963,49 @@ mod contract {
                     source.name
                 );
             }
+            for tool in &source.evidence_tools {
+                let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join(&tool.component);
+                let bytes = std::fs::read(&path)
+                    .unwrap_or_else(|error| panic!("reading {}: {error}", path.display()));
+                assert_eq!(
+                    format!("{:x}", sha2::Sha256::digest(bytes)),
+                    tool.component_sha256,
+                    "{} has a stale evidence-tool component_sha256 pin",
+                    tool.name
+                );
+            }
+            for tool in &source.evidence_tools {
+                let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join(&tool.component);
+                let bytes = std::fs::read(&path)
+                    .unwrap_or_else(|error| panic!("reading {}: {error}", path.display()));
+                let mut level = 0usize;
+                let mut imports = BTreeSet::new();
+                for payload in wasmparser::Parser::new(0).parse_all(&bytes) {
+                    match payload.unwrap_or_else(|error| {
+                        panic!("parsing {} evidence-tool component: {error}", tool.name)
+                    }) {
+                        wasmparser::Payload::Version { .. } => level += 1,
+                        wasmparser::Payload::End(_) => level -= 1,
+                        wasmparser::Payload::ComponentImportSection(section) if level == 1 => {
+                            for import in section {
+                                let name = import.expect("component import").name.name;
+                                let interface = name
+                                    .strip_prefix("kyyn:evidence-tool/")
+                                    .and_then(|name| name.split('@').next())
+                                    .unwrap_or(name);
+                                imports.insert(interface.to_string());
+                            }
+                        }
+                        _ => {}
+                    }
+                }
+                assert_eq!(
+                    imports,
+                    BTreeSet::from(["evidence".into()]),
+                    "{} must import only verified source evidence",
+                    tool.name
+                );
+            }
         }
         for sink in manifest.sinks {
             let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join(&sink.component);
@@ -989,6 +1061,20 @@ mod contract {
             ),
             FROZEN_CONFIGURATOR_WIT_SHA256,
             "wit/configurator.wit drifted from kyyn's frozen kyyn:configurator@1 contract"
+        );
+    }
+
+    #[test]
+    fn vendored_evidence_tool_wit_matches_kyyn_v1() {
+        const FROZEN_EVIDENCE_TOOL_WIT_SHA256: &str =
+            "dc1eff0d6ac3f2ebb0038c991f3b74fd5eae3d22fc6d1bffe09392e44065529a";
+        let bytes = std::fs::read(
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("wit/evidence-tool.wit"),
+        )
+        .expect("vendored evidence-tool WIT");
+        assert_eq!(
+            format!("{:x}", sha2::Sha256::digest(bytes)),
+            FROZEN_EVIDENCE_TOOL_WIT_SHA256
         );
     }
 

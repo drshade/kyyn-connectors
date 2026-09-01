@@ -53,12 +53,17 @@ source_guests="sweep git-repo pack salesforce graph-calendar graph-mail graph-ch
 sink_guests="file-replace git-ref microsoft-file-replace"
 connection_guests="microsoft-connection salesforce-connection"
 configurator_guests="microsoft-files graph-population"
+evidence_tool_guests="graph-message-as-text graph-meeting-attendance graph-meeting-detail graph-meeting-occurrences graph-meeting-transcript"
 source_packages=""
 sink_packages=""
 connection_packages=""
 configurator_packages=""
+evidence_tool_packages=""
 for guest in $source_guests; do
   source_packages="$source_packages -p kyyn-component-$guest"
+done
+for guest in $evidence_tool_guests; do
+  evidence_tool_packages="$evidence_tool_packages -p kyyn-evidence-tool-$guest"
 done
 for guest in $sink_guests; do
   sink_packages="$sink_packages -p kyyn-component-$guest"
@@ -102,12 +107,20 @@ done
   cargo build --locked --quiet --release --target wasm32-unknown-unknown $configurator_packages
   cargo clippy --locked --quiet --release --target wasm32-unknown-unknown \
       $configurator_packages -- -D warnings
+
+  export CARGO_TARGET_WASM32_UNKNOWN_UNKNOWN_RUSTFLAGS="--sysroot=${stable_sysroot} \
+--remap-path-prefix=${stable_sysroot}=/rust \
+-C metadata=kyyn-first-party-evidence-tool-v1"
+  cargo build --locked --quiet --release --target wasm32-unknown-unknown $evidence_tool_packages
+  cargo clippy --locked --quiet --release --target wasm32-unknown-unknown \
+      $evidence_tool_packages -- -D warnings
 )
 
 mkdir -p "$repo_root/components/sources"
 mkdir -p "$repo_root/components/sinks"
 mkdir -p "$repo_root/components/connections"
 mkdir -p "$repo_root/components/configurators"
+mkdir -p "$repo_root/components/evidence-tools"
 failed=false
 for guest in $source_guests $sink_guests $connection_guests; do
   crate_name="${guest//-/_}"
@@ -164,6 +177,24 @@ for guest in $configurator_guests; do
     failed=true
   fi
 done
+for guest in $evidence_tool_guests; do
+  crate_name="${guest//-/_}"
+  core="$repro/wasm32-unknown-unknown/release/kyyn_evidence_tool_${crate_name}.wasm"
+  built="$repro/evidence-tool-${guest}.wasm"
+  cargo run --locked --quiet -p kyyn-connector-componentize -- "$core" "$built"
+  leaked="$(LC_ALL=C strings "$built" | grep -E '(/home/|/Users/|\.cargo[/\\]|\.rustup[/\\])' || true)"
+  test -z "$leaked" || { echo "evidence-tool/$guest: component embeds host paths:" >&2; echo "$leaked" >&2; exit 1; }
+  committed="$repo_root/components/evidence-tools/${guest}.wasm"
+  digest="$(sha256sum "$built" | cut -d' ' -f1)"
+  if $update; then
+    cp "$built" "$committed"
+    echo "updated components/evidence-tools/${guest}.wasm ($digest)"
+  elif ! cmp -s "$built" "$committed"; then
+    echo "evidence-tool/$guest: committed component is stale (rebuilt $digest)" >&2
+    echo "  run scripts/check-components.sh --update and re-pin kyyn-connectors.ron" >&2
+    failed=true
+  fi
+done
 $failed && exit 1
 
 if $update; then
@@ -185,5 +216,10 @@ if $update; then
       "configurators/$guest" \
       "$(sha256sum "$repo_root/components/configurators/${guest}.wasm" | cut -d' ' -f1)"
   done
+  for guest in $evidence_tool_guests; do
+    printf '  %-16s %s\n' \
+      "evidence-tools/$guest" \
+      "$(sha256sum "$repo_root/components/evidence-tools/${guest}.wasm" | cut -d' ' -f1)"
+  done
 fi
-echo "components: source, sink, connection and configurator guests compile and componentize reproducibly"
+echo "components: source, sink, connection, configurator and evidence-tool guests compile and componentize reproducibly"

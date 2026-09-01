@@ -122,6 +122,20 @@
          ]),
          component: "components/sources/graph-mail.wasm",
          component_sha256: "75f04194a1f5bc5aee04941dcbc198a4f4b79c9ab903403f98ff017019a57029",
+         evidence_tools: [(
+            name: "message-as-text",
+            description: "Render one verified Graph mail item as bounded readable text with message metadata and an explicit continuation cursor.",
+            parameters: Struct(fields: [
+                (name: "item", description: "Exact source item-version key.", type: String(max_bytes: 512)),
+                (name: "cursor", description: "Optional byte cursor in normalized text.", type: Optional(U64), required: false),
+                (name: "max_bytes", description: "Requested output text bytes, bounded to 131072.", type: Optional(U64), required: false),
+            ]),
+            result: Text(max_bytes: 262144),
+            world: "kyyn:evidence-tool@1",
+            execution_profile: "kyyn-evidence-tool-contained-1",
+            component: "components/evidence-tools/graph-message-as-text.wasm",
+            component_sha256: "2762530a2165782cff9f62b8d2491e02525eb1afd1a188b5dca34b06511c23fc",
+         )],
          config: [
             (name: "mail_filter", doc: "OData $filter fragment ANDed onto the mail window.", example: Some("contains(subject, 'Sales Update')")),
             (name: "owner_addresses", doc: "Your own addresses (lowercased) — classifies sent vs received.", ty: StrList, example: Some("you@company.com")),
@@ -168,6 +182,32 @@
          ]),
          component: "components/sources/graph-org-meetings.wasm",
          component_sha256: "99fbf88d3dc2cba1b7772ae4957fc74185730f44d1ae06f496b8c1b32d4f2022",
+         evidence_tools: [
+            (name: "meeting-occurrences", description: "Consolidate verified observer copies by held occurrence while keeping recurring-series dates separate.",
+             parameters: Struct(fields: [
+                (name: "items", description: "Exact meeting item-version keys, in requested order.", type: List(item: String(max_bytes: 512), max_items: 128)),
+             ]), result: Text(max_bytes: 2097152), world: "kyyn:evidence-tool@1", execution_profile: "kyyn-evidence-tool-contained-1",
+             component: "components/evidence-tools/graph-meeting-occurrences.wasm", component_sha256: "ffecde923a8f10494af77e1e40f7dc4c899c243963d1d7883b90af6fe9b6b48a"),
+            (name: "meeting-detail", description: "Render one held occurrence with its exact observations, invitees, and per-occurrence attendance.",
+             parameters: Struct(fields: [
+                (name: "items", description: "Exact item-version keys for the held occurrence.", type: List(item: String(max_bytes: 512), max_items: 128)),
+                (name: "occurrence_id", description: "Connector occurrence identity shared by every item.", type: String(max_bytes: 512)),
+             ]), result: Text(max_bytes: 2097152), world: "kyyn:evidence-tool@1", execution_profile: "kyyn-evidence-tool-contained-1",
+             component: "components/evidence-tools/graph-meeting-detail.wasm", component_sha256: "b2469eeed534c444d999e402578e69dcd9261222a078259f780d5221fce32584"),
+            (name: "meeting-transcript", description: "Page one retained meeting transcript on complete WebVTT cue boundaries where possible.",
+             parameters: Struct(fields: [
+                (name: "item", description: "Exact meeting item-version key.", type: String(max_bytes: 512)),
+                (name: "cursor", description: "Optional byte cursor in the retained transcript.", type: Optional(U64), required: false),
+                (name: "max_bytes", description: "Requested transcript page bytes, bounded to 131072.", type: Optional(U64), required: false),
+             ]), result: Text(max_bytes: 262144), world: "kyyn:evidence-tool@1", execution_profile: "kyyn-evidence-tool-contained-1",
+             component: "components/evidence-tools/graph-meeting-transcript.wasm", component_sha256: "581653e49e13fcbb81136c6a71c379b7c99a271436ef521460106dac275db14c"),
+            (name: "meeting-attendance", description: "Render deduplicated attendance for one held occurrence without merging recurring-series dates.",
+             parameters: Struct(fields: [
+                (name: "items", description: "Exact item-version keys for the held occurrence.", type: List(item: String(max_bytes: 512), max_items: 128)),
+                (name: "occurrence_id", description: "Connector occurrence identity shared by every item.", type: String(max_bytes: 512)),
+             ]), result: Text(max_bytes: 2097152), world: "kyyn:evidence-tool@1", execution_profile: "kyyn-evidence-tool-contained-1",
+             component: "components/evidence-tools/graph-meeting-attendance.wasm", component_sha256: "d5d4421b4343cebbe8162cc928c190d4346067e138cce683ab09cf54450a5275"),
+         ],
          config: [
             (name: "scope_mode", label: Some("Population"), doc: "Choose every enabled organization member or an explicit selected set.", required: true, example: Some("all-members"), custody: Promotable, control: Choice(options: ["all-members", "selected-members"])),
             (name: "selected_users", label: Some("Selected user principal names"), doc: "Lowercase user principal names; required only for Selected members.", ty: StrList, example: Some("member@example.org"), custody: Promotable),
