@@ -18,7 +18,7 @@ mod guest {
         fn invoke(parameters: String) -> Result<Output, Diagnostic> {
             let p: TranscriptParameters = graph_evidence_views::decode(&parameters)
                 .map_err(|e| fail("invalid-parameters", e))?;
-            let max = p.max_bytes.unwrap_or(32_768).clamp(1024, 131_072);
+            let max = p.max_bytes.unwrap_or(32_768).clamp(1, 131_072);
             let request = EvidenceReadRequest {
                 item: p.item.clone(),
                 file: None,

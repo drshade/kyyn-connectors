@@ -102,6 +102,8 @@ pub struct Meeting {
     pub organizer_address: String,
     pub observed_by: String,
     pub is_organizer: bool,
+    pub cancelled: bool,
+    pub online_meeting: bool,
     pub invitees: Vec<Person>,
     pub attendance: Vec<Person>,
     pub attendance_observed: bool,
@@ -116,6 +118,8 @@ pub struct OccurrenceView {
     pub end: String,
     pub organizer_name: String,
     pub organizer_address: String,
+    pub cancelled: bool,
+    pub online_meeting: bool,
     pub invitee_count: usize,
     pub attendance_count: usize,
     pub transcript_available: bool,
@@ -155,6 +159,13 @@ pub struct AttendanceView {
     pub subjects: Vec<String>,
 }
 #[derive(Debug, Serialize)]
+pub struct MemberObservationView {
+    pub observation_id: String,
+    pub source_item: String,
+    pub outcome: String,
+    pub reason: String,
+}
+#[derive(Debug, Serialize)]
 pub struct MailTextView {
     pub message_id: String,
     pub subject: Option<String>,
@@ -188,10 +199,18 @@ struct RawMeeting {
 struct RawEvent {
     attendees: Vec<RawInvitee>,
     end: RawDateTime,
+    is_cancelled: bool,
+    is_online_meeting: bool,
     is_organizer: bool,
     organizer: RawOrganizer,
     start: RawDateTime,
     subject: String,
+}
+#[derive(Deserialize, Default)]
+#[serde(default, rename_all = "camelCase")]
+struct RawMemberObservation {
+    id: String,
+    reason: String,
 }
 #[derive(Deserialize, Default)]
 #[serde(default, rename_all = "camelCase")]
@@ -382,11 +401,33 @@ pub fn parse_meeting(
         organizer_address: raw.calendar_event.organizer.email_address.address,
         observed_by: raw.observed_by_user_principal_name,
         is_organizer: raw.calendar_event.is_organizer,
+        cancelled: raw.calendar_event.is_cancelled,
+        online_meeting: raw.calendar_event.is_online_meeting,
         invitees,
         attendance: attendance.into_values().collect(),
         attendance_observed,
         transcript_observed,
         transcript,
+    })
+}
+
+pub fn parse_member_observation(
+    item: &str,
+    content: &str,
+) -> Result<MemberObservationView, String> {
+    let raw: RawMemberObservation = serde_json::from_str(content)
+        .map_err(|error| format!("member observation JSON: {error}"))?;
+    if !item.starts_with("org-member-observation:")
+        || !raw.id.starts_with("member-observation:v1:")
+        || raw.reason.is_empty()
+    {
+        return Err("item is not current graph-org-meetings member observation evidence".into());
+    }
+    Ok(MemberObservationView {
+        observation_id: raw.id,
+        source_item: item.into(),
+        outcome: "unavailable".into(),
+        reason: raw.reason,
     })
 }
 
@@ -439,6 +480,8 @@ pub fn occurrence_view(id: &str, meetings: &[Meeting]) -> OccurrenceView {
         end: selected.end.clone(),
         organizer_name: selected.organizer_name.clone(),
         organizer_address: selected.organizer_address.clone(),
+        cancelled: meetings.iter().any(|meeting| meeting.cancelled),
+        online_meeting: meetings.iter().any(|meeting| meeting.online_meeting),
         invitee_count: invitees.len(),
         attendance_count: attendance.len(),
         transcript_available: meetings.iter().any(|m| m.transcript_observed),
@@ -516,7 +559,9 @@ pub fn transcript_view(
             .into_iter()
             .chain(page.rfind("\n\n").map(|at| start + at + 2))
             .max();
-        if let Some(boundary) = boundary.filter(|boundary| boundary.saturating_sub(start) >= 1024) {
+        if let Some(boundary) =
+            boundary.filter(|boundary| *boundary > start && text[start..*boundary].contains("-->"))
+        {
             end = boundary;
             cue = true;
         }
@@ -597,7 +642,8 @@ fn html_text(input: &str) -> String {
 mod tests {
     use super::*;
     use graph_population::{
-        ArtifactOutcome, AttendanceArtifact, PopulationMeeting, TranscriptArtifact,
+        ArtifactOutcome, AttendanceArtifact, MemberUnavailable, MemberUnavailableReason,
+        PopulationMeeting, TranscriptArtifact,
     };
     use serde_json::json;
     fn meeting(id: &str, start: &str) -> String {
@@ -643,6 +689,22 @@ mod tests {
         assert_eq!(view.subjects.len(), 2);
     }
     #[test]
+    fn occurrence_exposes_structured_cancelled_and_online_state() {
+        let content = meeting("first", "2026-08-25").replace(
+            "\"isOrganizer\":true",
+            "\"isOrganizer\":true,\"isCancelled\":true,\"isOnlineMeeting\":true",
+        );
+        let parsed =
+            parse_meeting("org-meeting:occurrence:v1:first@version-a", &content, false).unwrap();
+        let groups = group(vec![parsed]);
+        let view = occurrence_view(
+            "org-meeting:occurrence:v1:first",
+            &groups["org-meeting:occurrence:v1:first"],
+        );
+        assert!(view.cancelled);
+        assert!(view.online_meeting);
+    }
+    #[test]
     fn transcript_pages_end_at_a_complete_cue() {
         let mut parsed = parse_meeting(
             "org-meeting:occurrence:v1:first@version-a",
@@ -660,6 +722,43 @@ mod tests {
         assert_eq!(page.next_cursor, Some(page.byte_end));
     }
     #[test]
+    fn transcript_page_never_exceeds_the_requested_cap() {
+        let mut parsed = parse_meeting(
+            "org-meeting:occurrence:v1:first@version-a",
+            &meeting("first", "2026-08-25"),
+            false,
+        )
+        .unwrap();
+        parsed.transcript = Some(format!(
+            "WEBVTT\n\n00:00.000 --> 00:01.000\n{}\n\n",
+            "a".repeat(1_100)
+        ));
+        let page = transcript_view(&parsed, 0, 700).unwrap();
+        assert_eq!(page.byte_end, 700);
+        assert!(!page.ended_at_cue_boundary);
+    }
+    #[test]
+    fn population_member_observation_round_trips_into_the_view() {
+        let produced = MemberUnavailable {
+            id: format!("member-observation:v1:{}", "a".repeat(64)),
+            member_id: "member-1".into(),
+            user_principal_name: "member@example.test".into(),
+            window_start: "2026-08-25T00:00:00Z".into(),
+            window_until: "2026-09-01T00:00:00Z".into(),
+            reason: MemberUnavailableReason::MailboxUnavailable,
+            provider_code: Some("MailboxNotEnabledForRESTAPI".into()),
+        };
+        let encoded = serde_json::to_string(&produced).unwrap();
+        let view = parse_member_observation(
+            &format!("org-member-observation:{}@version", produced.id),
+            &encoded,
+        )
+        .unwrap();
+        assert_eq!(view.observation_id, produced.id);
+        assert_eq!(view.outcome, "unavailable");
+        assert_eq!(view.reason, "mailbox-unavailable");
+    }
+    #[test]
     fn population_producer_round_trips_into_the_meeting_view() {
         let produced = PopulationMeeting {
             id: "occurrence:v1:producer-proof".into(),
@@ -671,6 +770,8 @@ mod tests {
                 "start": {"dateTime": "2026-08-25T08:00:00Z"},
                 "end": {"dateTime": "2026-08-25T09:00:00Z"},
                 "isOrganizer": true,
+                "isCancelled": true,
+                "isOnlineMeeting": true,
                 "organizer": {"emailAddress": {"name": "Ada", "address": "ada@example.test"}},
                 "attendees": [{
                     "emailAddress": {"name": "Grace", "address": "grace@example.test"},
@@ -711,6 +812,8 @@ mod tests {
         assert_eq!(parsed.organizer_name, "Ada");
         assert_eq!(parsed.organizer_address, "ada@example.test");
         assert_eq!(parsed.invitees[0].response.as_deref(), Some("accepted"));
+        assert!(parsed.cancelled);
+        assert!(parsed.online_meeting);
         assert_eq!(parsed.attendance[0].minutes, Some(60));
         assert!(parsed.transcript.unwrap().contains("Welcome"));
     }

@@ -562,6 +562,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "kyyn-evidence-tool-graph-member-observations"
+version = "0.1.0"
+dependencies = [
+ "graph-evidence-views",
+ "wit-bindgen 0.51.0",
+]
+
+[[package]]
 name = "kyyn-evidence-tool-graph-message-as-text"
 version = "0.1.0"
 dependencies = [
