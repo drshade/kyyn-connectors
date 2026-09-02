@@ -134,7 +134,7 @@
             world: "kyyn:evidence-tool@1",
             execution_profile: "kyyn-evidence-tool-contained-1",
             component: "components/evidence-tools/graph-message-as-text.wasm",
-            component_sha256: "4f2d2edbbcc8be07c04294f1af70434d8434454708245561085424c22a313074",
+            component_sha256: "64533ceedf0f7fa842d2b3054c6192c869d80bd330b1d20fc2b7dd75196b263a",
          )],
          config: [
             (name: "mail_filter", doc: "OData $filter fragment ANDed onto the mail window.", example: Some("contains(subject, 'Sales Update')")),
@@ -187,7 +187,7 @@
              parameters: Struct(fields: [
                 (name: "items", description: "Exact meeting item-version keys, in requested order.", type: List(item: String(max_bytes: 512), max_items: 128)),
              ]), result: Text(max_bytes: 2097152), world: "kyyn:evidence-tool@1", execution_profile: "kyyn-evidence-tool-contained-1",
-             component: "components/evidence-tools/graph-meeting-occurrences.wasm", component_sha256: "5e8ea6afbe910d292a7bb27a4d7e6703d51a45281239160eae5bfba3306615e1"),
+             component: "components/evidence-tools/graph-meeting-occurrences.wasm", component_sha256: "462acd5a1238d7559fc14013387d4bec411b32bbf74e42234ec515b47dd2b477"),
             (name: "member-observations", description: "Render verified non-occurrence population member outcomes, including mailbox-unavailable reasons, in requested order.",
              parameters: Struct(fields: [
                 (name: "items", description: "Exact member-observation item-version keys, in requested order.", type: List(item: String(max_bytes: 512), max_items: 128)),
@@ -198,20 +198,20 @@
                 (name: "items", description: "Exact item-version keys for the held occurrence.", type: List(item: String(max_bytes: 512), max_items: 128)),
                 (name: "occurrence_id", description: "Connector occurrence identity shared by every item.", type: String(max_bytes: 512)),
              ]), result: Text(max_bytes: 2097152), world: "kyyn:evidence-tool@1", execution_profile: "kyyn-evidence-tool-contained-1",
-             component: "components/evidence-tools/graph-meeting-detail.wasm", component_sha256: "23e16a7e34e1aec72f97619aaaaf701ee8fa2f5d70b8cadb37a0f5775173c46f"),
+             component: "components/evidence-tools/graph-meeting-detail.wasm", component_sha256: "56fb82e78bf886e2f869dc0ce137a6d3b525d221580e0429162df898098804b2"),
             (name: "meeting-transcript", description: "Page one retained meeting transcript without exceeding the requested byte cap, ending on a complete WebVTT cue boundary where one fits.",
              parameters: Struct(fields: [
                 (name: "item", description: "Exact meeting item-version key.", type: String(max_bytes: 512)),
                 (name: "cursor", description: "Optional byte cursor in the retained transcript.", type: Optional(U64), required: false),
                 (name: "max_bytes", description: "Requested transcript page bytes, bounded to 131072.", type: Optional(U64), required: false),
              ]), result: Text(max_bytes: 262144), world: "kyyn:evidence-tool@1", execution_profile: "kyyn-evidence-tool-contained-1",
-             component: "components/evidence-tools/graph-meeting-transcript.wasm", component_sha256: "1a223e081509fb46778ab71f38e9a90370802d38bf91d776b7192be8947132c5"),
+             component: "components/evidence-tools/graph-meeting-transcript.wasm", component_sha256: "82dc94ee6b610090ef92c1b756e165b194795e549a31b420b9148ed29e7c1366"),
             (name: "meeting-attendance", description: "Render deduplicated attendance for one held occurrence without merging recurring-series dates.",
              parameters: Struct(fields: [
                 (name: "items", description: "Exact item-version keys for the held occurrence.", type: List(item: String(max_bytes: 512), max_items: 128)),
                 (name: "occurrence_id", description: "Connector occurrence identity shared by every item.", type: String(max_bytes: 512)),
              ]), result: Text(max_bytes: 2097152), world: "kyyn:evidence-tool@1", execution_profile: "kyyn-evidence-tool-contained-1",
-             component: "components/evidence-tools/graph-meeting-attendance.wasm", component_sha256: "4a7536751b09129aaed6b30301a54578ee77cfa6cbf05c6691e289350bf9febe"),
+             component: "components/evidence-tools/graph-meeting-attendance.wasm", component_sha256: "b28f3ddcadddce15538d19dc907e6bba26a3c9f30355c0512d794777986a0a8b"),
          ],
          config: [
             (name: "scope_mode", label: Some("Population"), doc: "Choose every enabled organization member or an explicit selected set.", required: true, example: Some("all-members"), custody: Promotable, control: Choice(options: ["all-members", "selected-members"])),
