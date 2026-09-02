@@ -19,6 +19,7 @@ members = [
     "connectors/configurators/microsoft-files",
     "connectors/configurators/graph-population",
     "connectors/evidence-tools/graph-message-as-text",
+    "connectors/evidence-tools/graph-member-observations",
     "connectors/evidence-tools/graph-meeting-attendance",
     "connectors/evidence-tools/graph-meeting-detail",
     "connectors/evidence-tools/graph-meeting-occurrences",
