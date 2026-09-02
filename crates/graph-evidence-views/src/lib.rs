@@ -204,7 +204,7 @@ struct RawEvent {
     is_organizer: bool,
     organizer: RawOrganizer,
     start: RawDateTime,
-    subject: String,
+    subject: Option<String>,
 }
 #[derive(Deserialize, Default)]
 #[serde(default, rename_all = "camelCase")]
@@ -394,7 +394,7 @@ pub fn parse_meeting(
     Ok(Meeting {
         item: item.into(),
         occurrence_id: occurrence_id(item),
-        subject: raw.calendar_event.subject,
+        subject: raw.calendar_event.subject.unwrap_or_default(),
         start: raw.calendar_event.start.date_time,
         end: raw.calendar_event.end.date_time,
         organizer_name: raw.calendar_event.organizer.email_address.name,
@@ -703,6 +703,14 @@ mod tests {
         );
         assert!(view.cancelled);
         assert!(view.online_meeting);
+    }
+    #[test]
+    fn nullable_graph_subject_is_an_empty_display_value() {
+        let content =
+            meeting("first", "2026-08-25").replace("\"subject\":\"Weekly\"", "\"subject\":null");
+        let parsed =
+            parse_meeting("org-meeting:occurrence:v1:first@version-a", &content, false).unwrap();
+        assert_eq!(parsed.subject, "");
     }
     #[test]
     fn transcript_pages_end_at_a_complete_cue() {
